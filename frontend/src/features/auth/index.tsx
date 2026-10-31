@@ -5,7 +5,14 @@ import { useAuth } from "../../app/AuthContext";
 import { apiRequest } from "../../api/client";
 
 function AuthShell({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  return <main className="grid min-h-screen place-items-center bg-slate-50 p-5"><section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"><Link to="/login" className="text-xl font-bold text-indigo-700">revo<span className="text-slate-400">.</span></Link><h1 className="mt-8 text-2xl font-semibold">{title}</h1><p className="mt-2 text-sm text-slate-500">{description}</p>{children}</section></main>;
+  return <main className="grid min-h-screen min-w-0 grid-cols-1 bg-[#f3f5f0] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+    <section className="hidden bg-[#193b2b] px-10 py-10 text-white lg:flex lg:flex-col lg:justify-between xl:px-16 xl:py-14">
+      <Link to="/login" className="w-fit text-2xl font-bold tracking-tight">revo<span className="text-[#b3d57d]">.</span></Link>
+      <div className="max-w-xl"><h2 className="text-5xl font-semibold leading-[1.08] tracking-tight xl:text-6xl">Subscription revenue, kept in view.</h2><p className="mt-7 max-w-md text-lg leading-8 text-white/75">Revo brings billing cycles, customer commitments, and cash collection into one workspace.</p></div>
+      <p className="text-sm text-white/70">Brightloop Software · Secure workspace</p>
+    </section>
+    <section className="flex min-h-screen min-w-0 items-center justify-center px-4 py-8 sm:px-8 lg:px-12"><div className="w-full min-w-0 max-w-md border border-slate-300 bg-white p-6 sm:p-10"><Link to="/login" className="mb-8 inline-block text-xl font-bold tracking-tight text-slate-900 lg:hidden">revo<span className="text-indigo-700">.</span></Link><h1 className="text-3xl font-semibold tracking-tight text-slate-900">{title}</h1><p className="mt-3 text-base leading-6 text-slate-700">{description}</p>{children}</div></section>
+  </main>;
 }
 
 function ErrorNotice({ children }: { children: string }) { return <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{children}</p>; }

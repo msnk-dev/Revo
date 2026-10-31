@@ -9,11 +9,13 @@ import { StatusChip } from "../../components/StatusChip";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { EmptyState, ErrorState, LoadingState, Screen } from "../../components/Screen";
 import { RoleGuard } from "../../app/RoleGuard";
+import { useAuth } from "../../app/AuthContext";
 
 type PortalSection = "subscriptions" | "invoices" | "payments";
 type PlanOption = { id: number; name?: string; closable: boolean };
 
 function PortalPage() {
+  const { user } = useAuth();
   const [section, setSection] = useState<PortalSection>("subscriptions"); const [pageNumber, setPageNumber] = useState(1); const pageSize = 20;
   const [closeCandidate, setCloseCandidate] = useState<Subscription | null>(null); const [notice, setNotice] = useState(""); const queryClient = useQueryClient();
   const mockMode = import.meta.env.VITE_USE_MOCKS === "true";
@@ -34,17 +36,18 @@ function PortalPage() {
     { key: "date", header: "Invoice date", render: (row) => (row as Invoice).invoice_date },
     { key: "due", header: "Due date", render: (row) => (row as Invoice).due_date },
     { key: "status", header: "Status", render: (row) => <StatusChip status={(row as Invoice).status} /> },
-    { key: "total", header: "Total", render: (row) => <Money amount={(row as Invoice).total} /> },
+    { key: "total", header: "Total", align: "right", render: (row) => <Money amount={(row as Invoice).total} /> },
     { key: "pdf", header: "PDF", render: (row) => mockMode ? <button onClick={() => window.print()} className="font-medium text-indigo-700">Print / save PDF</button> : <a className="font-medium text-indigo-700" href={`${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1"}/portal/invoices/${(row as Invoice).id}/pdf`} target="_blank" rel="noreferrer">Open PDF</a> },
   ];
   if (section === "payments") columns = [
     { key: "date", header: "Paid on", render: (row) => (row as Payment).paid_on },
     { key: "invoice", header: "Invoice", render: (row) => { const payment = row as Payment; return payment.invoice_number ?? `Invoice #${payment.invoice_id}`; } },
     { key: "method", header: "Method", render: (row) => <span className="capitalize">{(row as Payment).method.replaceAll("_", " ")}</span> },
-    { key: "amount", header: "Amount", render: (row) => <Money amount={(row as Payment).amount} /> },
+    { key: "amount", header: "Amount", align: "right", render: (row) => <Money amount={(row as Payment).amount} /> },
   ];
   return <Screen eyebrow="Customer portal" title="My account" description="Your subscriptions, invoices, and payment history.">
-    <div className="flex flex-wrap gap-2 border-b border-slate-200">{tabs.map((tab) => <button key={tab.key} onClick={() => { setSection(tab.key); setPageNumber(1); }} className={`rounded-t-lg px-4 py-2.5 text-sm font-medium ${section === tab.key ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500 hover:text-slate-800"}`}>{tab.label}</button>)}</div>
+    <section className="bg-[#193b2b] px-5 py-5 text-white sm:px-7 sm:py-6"><h2 className="text-2xl font-semibold tracking-tight">Welcome, {user?.name ?? "customer"}</h2><p className="mt-2 text-base leading-6 text-white/80">Your account activity and documents, securely scoped to your profile.</p><p className="mt-4 text-sm text-white/70">{user?.email}</p></section>
+    <div className="flex flex-wrap gap-x-6 border-b border-slate-300">{tabs.map((tab) => <button key={tab.key} onClick={() => { setSection(tab.key); setPageNumber(1); }} aria-current={section === tab.key ? "page" : undefined} className={`min-h-12 border-b-2 px-1 py-3 text-sm font-semibold transition-colors ${section === tab.key ? "border-indigo-700 text-indigo-800" : "border-transparent text-slate-600 hover:text-slate-900"}`}>{tab.label}</button>)}</div>
     {notice && <p role="status" className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{notice}</p>}
     {closeRequest.error && <ErrorState message={closeRequest.error instanceof Error ? closeRequest.error.message : "Close request failed."} />}
     <div className="pt-2">{result.isLoading ? <LoadingState label={`Loading ${section}…`} /> : result.error ? <ErrorState message={`Could not load your ${section}.`} onRetry={() => void result.refetch()} /> : (result.data?.total ?? 0) === 0 ? <EmptyState title={`No ${section} yet`} description="Your account records will appear here when they are available." /> : <DataTable rows={result.data?.items ?? []} columns={columns} rowKey={(row) => row.id} page={pageNumber} pageSize={pageSize} total={result.data?.total ?? 0} onPageChange={setPageNumber} />}</div>

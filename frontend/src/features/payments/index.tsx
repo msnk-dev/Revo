@@ -16,7 +16,7 @@ function PaymentsPage() {
     { key: "date", header: "Paid on", render: (row) => new Date(`${row.paid_on}T00:00:00`).toLocaleDateString("en-IN") },
     { key: "invoice", header: "Invoice", render: (row) => <Link to={`/invoices/${row.invoice_id}`} className="font-semibold text-indigo-700">{row.invoice_number ?? `Invoice #${row.invoice_id}`}</Link> },
     { key: "method", header: "Method", render: (row) => <span className="capitalize">{row.method.replaceAll("_", " ")}</span> },
-    { key: "amount", header: "Amount", render: (row) => <Money amount={row.amount} /> },
+    { key: "amount", header: "Amount", align: "right", render: (row) => <Money amount={row.amount} /> },
   ];
   return <Screen eyebrow="Billing" title="Payments" description="Recorded customer payments across invoices.">
     {query.isLoading ? <LoadingState label="Loading payments…" /> : query.error ? <ErrorState message="Could not load payments." onRetry={() => void query.refetch()} /> : (query.data?.total ?? 0) === 0 ? <EmptyState title="No payments recorded" description="Payments appear here once they have been recorded against an invoice." /> : <DataTable rows={query.data?.items ?? []} columns={columns} rowKey={(row) => row.id} page={page} pageSize={pageSize} total={query.data?.total ?? 0} onPageChange={setPage} />}

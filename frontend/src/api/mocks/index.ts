@@ -6,7 +6,7 @@ type DemoInvoice = Invoice & { period_start: string; period_end: string; lines: 
 type DemoCustomer = { id: number; user_id: number | null; name: string; email: string; phone: string | null; company: string | null; billing_address: string | null; tax_id: string | null; is_active: boolean };
 type DemoProduct = { id: number; name: string; type: "service" | "software" | "addon" | "physical"; sales_price: string; cost_price: string; notes: string | null; default_tax_id: number | null; is_active: boolean };
 type DemoPlan = { id: number; name: string; price: string; billing_period: "daily" | "weekly" | "monthly" | "yearly"; min_quantity: number; available_from: string | null; available_to: string | null; auto_close: boolean; closable: boolean; pausable: boolean; renewable: boolean; is_active: boolean };
-const customers: DemoCustomer[] = [{ id: 1, user_id: 2, name: "Demo Customer", email: "customer@revo.local", phone: "+91 98765 43210", company: "Brightloop Demo", billing_address: "Bengaluru, India", tax_id: "GST-DEMO", is_active: true }];
+const customers: DemoCustomer[] = [{ id: 1, user_id: 2, name: "Demo Customer", email: "customer@example.com", phone: "+91 98765 43210", company: "Brightloop Demo", billing_address: "Bengaluru, India", tax_id: "GST-DEMO", is_active: true }];
 const products: DemoProduct[] = [{ id: 1, name: "Revo Subscription", type: "software", sales_price: "1200.00", cost_price: "0.00", notes: "Monthly software plan", default_tax_id: 1, is_active: true }];
 const plans: DemoPlan[] = [{ id: 1, name: "Monthly", price: "1200.00", billing_period: "monthly", min_quantity: 1, available_from: null, available_to: null, auto_close: false, closable: true, pausable: true, renewable: true, is_active: true }, { id: 2, name: "Annual Support", price: "18000.00", billing_period: "yearly", min_quantity: 1, available_from: null, available_to: null, auto_close: false, closable: true, pausable: true, renewable: true, is_active: true }];
 const taxes = [{ id: 1, name: "GST 18%", rate_pct: "18.00", is_active: true }];
@@ -54,7 +54,7 @@ let invoices: DemoInvoice[] = [
 ];
 let payments: Payment[] = [{ id: 1, invoice_id: 2, invoice_number: "INV-000002", customer_name: "Brightloop Demo", amount: "21240.00", paid_on: "2026-10-15", method: "bank_transfer", note: "Demo payment" }];
 let nextPaymentId = 2;
-let staff: { id: number; name: string; email: string; role: "admin" | "staff"; is_active: boolean }[] = [{ id: 1, name: "Demo Admin", email: "admin@revo.local", role: "admin", is_active: true }];
+let staff: { id: number; name: string; email: string; role: "admin" | "staff"; is_active: boolean }[] = [{ id: 1, name: "Demo Admin", email: "admin@example.com", role: "admin", is_active: true }];
 
 function pageOf<T>(items: T[], path: string): Page<T> {
   const url = new URL(path, "http://mock.local");
@@ -97,7 +97,7 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     return reply(currentUser);
   }
   if (route === "/auth/signup" && method === "POST") {
-    currentUser = { id: 2, name: String(body.name ?? "Demo Customer"), email: String(body.email ?? "customer@revo.local"), role: "customer", customer_id: 1 };
+    currentUser = { id: 2, name: String(body.name ?? "Demo Customer"), email: String(body.email ?? "customer@example.com"), role: "customer", customer_id: 1 };
     return reply({ created: true });
   }
   if (route === "/auth/logout" && method === "POST") { currentUser = null; return reply(undefined); }

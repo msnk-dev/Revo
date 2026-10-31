@@ -31,7 +31,22 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     headers,
     credentials: "include",
   });
-  if (!response.ok) throw new Error(`Request failed (${response.status})`);
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const payload = await response.json() as { error?: { message?: string; details?: Record<string, unknown> } };
+      const error = payload.error;
+      const details = Object.entries(error?.details ?? {})
+        .map(([field, detail]) => `${field}: ${String(detail)}`)
+        .join("; ");
+      message = details
+        ? `${error?.message ?? message} (${details})`
+        : error?.message ?? message;
+    } catch {
+      // Keep the HTTP status message when the server response is not JSON.
+    }
+    throw new Error(message);
+  }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

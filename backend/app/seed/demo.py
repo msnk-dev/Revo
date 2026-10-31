@@ -25,7 +25,7 @@ from app.models import (
     QuotationTemplateLineVariant,
 )
 
-ADMIN_EMAIL = "admin@revo.local"
+ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = os.environ.get("REVO_DEMO_ADMIN_PASSWORD") or f"{secrets.token_urlsafe(18)}A!"
 CUSTOMER_PASSWORD = os.environ.get("REVO_DEMO_CUSTOMER_PASSWORD") or f"{secrets.token_urlsafe(18)}B!"
 
@@ -40,7 +40,7 @@ def seed_demo_data() -> None:
 
         admin = User(email=ADMIN_EMAIL, password_hash=hasher.hash(ADMIN_PASSWORD), role="admin", is_active=True)
         customer_user = User(
-            email="customer@revo.local",
+            email="customer@example.com",
             password_hash=hasher.hash(CUSTOMER_PASSWORD),
             role="customer",
             is_active=True,
@@ -135,7 +135,7 @@ def seed_demo_data() -> None:
         )
 
     print(f"Demo data loaded. Admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
-    print(f"Customer login: customer@revo.local / {CUSTOMER_PASSWORD}")
+    print(f"Customer login: customer@example.com / {CUSTOMER_PASSWORD}")
 
 
 if __name__ == "__main__":

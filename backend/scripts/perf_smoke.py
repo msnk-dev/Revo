@@ -9,7 +9,7 @@ import httpx
 
 def main() -> None:
     base_url = os.environ.get("REVO_API_URL", "http://localhost:8000/api/v1")
-    email = os.environ.get("REVO_ADMIN_EMAIL", "admin@revo.local")
+    email = os.environ.get("REVO_ADMIN_EMAIL", "admin@example.com")
     password = os.environ.get("REVO_ADMIN_PASSWORD")
     if not password:
         raise SystemExit("Set REVO_ADMIN_PASSWORD to the seeded admin password")

@@ -4,16 +4,26 @@ Subscription management for Brightloop Software.
 
 ## Local development
 
-Requirements: Docker Desktop with Compose for the full stack, or Python 3.12 and `uv` for backend development.
+Requirements: Docker Desktop with Compose for PostgreSQL, MailHog, and the API; Node.js 22.22 or newer and npm for the frontend. Backend-only development needs Python 3.12 and `uv`.
 
 1. Copy `.env.example` to `.env` if `make up` has not done so.
 2. Run `make up` to start PostgreSQL, MailHog, and the API.
 3. Open the API docs at <http://localhost:8000/docs> and MailHog at <http://localhost:8025>.
-4. In another terminal, run `make seed` to load the demo data.
+4. In another terminal, run `make seed` to load the demo data and create the first admin account. Save the one-time credentials printed by the command.
+5. Copy `frontend/.env.example` to `frontend/.env.local`, set `VITE_USE_MOCKS=false`, then run `cd frontend && npm ci && npm run dev`.
+6. Open <http://localhost:5173> and sign in with the admin credentials from `make seed`.
+
+The seed creates one sample customer, an active monthly subscription, a matching catalog product and plan, and payment methods. The customer account credentials printed during the first seed run can be used to exercise the read-only portal. The scheduler generates invoices daily at 01:00 UTC. For an immediate billing preview, call `POST /api/v1/admin/jobs/generate_invoices/run` with the admin session cookies and an `X-CSRF-Token` header matching the `csrf_token` cookie. Email previews are available in MailHog at <http://localhost:8025>.
+
+The current frontend does not yet expose subscription creation or invoice generation, and invoice detail / overdue dashboard response shapes still need to be aligned with the API. Use the API docs for those billing operations until Person B completes the matching frontend integration. The AI chat panel is also a UI shell until its API endpoints and tool actions are delivered.
+
+For a frontend-only preview, leave `VITE_USE_MOCKS=true` and use the demo login shown on the sign-in screen. Mock mode is a limited UI preview; use the API-backed flow above to demo customer, catalog, staff, reporting, and lifecycle operations.
 
 For backend tests outside Docker, run `cd backend && uv --cache-dir .uv-cache sync --frozen && uv --cache-dir .uv-cache run --frozen pytest`.
 
 Useful commands: `make down`, `make logs`, `make migrate`, and `make test`.
+
+The data model is documented in [docs/erd.md](docs/erd.md).
 
 ## GitHub workflow
 

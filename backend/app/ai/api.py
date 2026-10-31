@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.briefing import _narrative_numbers_are_grounded, run_daily_brief
+from app.ai.agents import deterministic_route, run_agent
 from app.ai.config import settings as ai_settings
 from app.ai.models import AIRun, Brief
 from app.ai.providers import chat_completion
@@ -158,6 +159,48 @@ def _provider_answer(message: str, context: ToolContext) -> tuple[str | None, st
 
 @router.post("/chat", response_model=ChatOut)
 def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> ChatOut:
+    agent_name, _intent = deterministic_route(payload.message, actor.role)
+    if agent_name in {"invoice_explainer", "collections"}:
+        result = run_agent(db, actor, payload.message.strip())
+        proposal = result.proposal
+        plan: dict = {"agent": result.agent, "intent": result.intent}
+        if proposal is not None:
+            plan["proposal"] = proposal
+        run = AIRun(
+            agent=result.agent or "router",
+            user_id=actor.user_id,
+            input=payload.message,
+            plan=plan,
+            tool_calls=result.tool_calls,
+            output=result.answer[:8000],
+            model=result.model,
+            provider=result.provider,
+            latency_ms=result.latency_ms,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            status="pending" if proposal is not None else result.status,
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        proposals = []
+        if proposal is not None:
+            proposals.append(ProposalOut(
+                id=str(run.id),
+                action="send_reminder",
+                title="Send overdue invoice reminder",
+                description=f"Send the drafted reminder for invoice {proposal['invoice_number']} to {proposal['recipient_email']}.",
+                subject=proposal.get("subject"),
+                body=proposal.get("body"),
+            ))
+        return ChatOut(
+            answer=result.answer,
+            thread_id=payload.thread_id or str(uuid4()),
+            proposals=proposals,
+            provider=result.provider,
+            offline=result.status == "fallback",
+        )
+
     context = ToolContext(db=db, actor=actor)
     estimate_in = _estimated_tokens(payload.message)
     within_budget = ai_settings.llm_daily_token_budget > 0 and _daily_provider_tokens(db) + estimate_in <= ai_settings.llm_daily_token_budget
@@ -215,7 +258,7 @@ def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> C
 
 def _pending_action(db: Session, action_id: int) -> AIRun:
     run = db.scalar(select(AIRun).where(AIRun.id == action_id).with_for_update())
-    if run is None or run.status != "proposal_pending" or not isinstance(run.plan, dict) or not run.plan.get("proposal"):
+    if run is None or run.status not in {"proposal_pending", "pending"} or not isinstance(run.plan, dict) or not run.plan.get("proposal"):
         raise NotFoundError("Pending assistant action not found")
     return run
 
@@ -226,7 +269,21 @@ def confirm_action(
 ) -> ActionOut:
     run = _pending_action(db, action_id)
     proposal = run.plan["proposal"]
-    action = proposal.get("action")
+    action = proposal.get("action") or ("send_reminder" if proposal.get("kind") == "send_reminder" else None)
+    if action == "send_reminder" and proposal.get("kind") == "send_reminder":
+        invoice = db.scalar(select(Invoice).where(Invoice.id == proposal.get("invoice_id")).with_for_update())
+        if invoice is None or invoice.status != "confirmed" or invoice.amount_due <= 0 or invoice.due_date >= date.today():
+            raise NotFoundError("Overdue invoice not found")
+        recipient = str(proposal.get("recipient_email", ""))
+        if not recipient:
+            raise ValidationFailed("Reminder recipient is missing")
+        email.send_plain(to=recipient, subject=str(proposal.get("subject", "Payment reminder")), body=str(proposal.get("body", "")))
+        result_data = {"invoice_id": invoice.id, "sent": True}
+        run.status = "sent"
+        run.output = json.dumps(result_data, sort_keys=True, default=str)[:8000]
+        run.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        return ActionOut(id=run.id, status="sent", result=result_data)
     if action == "run_billing":
         data = ProposeBillingArgs.model_validate({"as_of": proposal.get("as_of")})
         result = billing.generate_due_invoices(db, data.as_of)

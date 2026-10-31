@@ -1,11 +1,17 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import logging
-from time import monotonic, perf_counter, sleep
+import time
+from time import monotonic, perf_counter
+from typing import Any
 
 from openai import OpenAI
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.ai.config import settings
+from app.ai.models import AIRun
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +19,17 @@ PROVIDER_CONFIG = {
     "groq": ("https://api.groq.com/openai/v1", "groq_api_key", "groq_model"),
     "hf": ("https://router.huggingface.co/v1", "hf_token", "hf_model"),
 }
-_circuit_until: dict[str, float] = {}
+_breaker_until: dict[str, float] = {}
+
+
+@dataclass(frozen=True)
+class ProviderResponse:
+    message: Any
+    provider: str
+    model: str
+    latency_ms: int
+    tokens_in: int | None
+    tokens_out: int | None
 
 
 @dataclass(frozen=True)
@@ -24,11 +40,13 @@ class BriefCompletion:
     latency_ms: int
 
 
-def _credentials(provider: str) -> tuple[str, str, str, float] | None:
+def _credentials(provider: str, *, router_model: bool = False) -> tuple[str, str, str, float] | None:
     if provider in PROVIDER_CONFIG:
         base_url, key_field, model_field = PROVIDER_CONFIG[provider]
         api_key = getattr(settings, key_field)
         model = getattr(settings, model_field)
+        if provider == "groq" and router_model:
+            model = settings.groq_router_model or model
         timeout = settings.llm_timeout_s
     elif provider == "ollama":
         base_url = settings.ollama_base_url
@@ -67,9 +85,9 @@ def _transient(exc: Exception) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError)) or "timeout" in type(exc).__name__.lower() or "connection" in type(exc).__name__.lower()
 
 
-def _request(provider: str, messages: list[dict], tools: list[dict] | None, temperature: float):
-    credentials = _credentials(provider)
-    if credentials is None or _circuit_until.get(provider, 0.0) > monotonic():
+def _request(provider: str, messages: list[dict], tools: list[dict] | None, temperature: float, *, router_model: bool = False, structured: bool = False):
+    credentials = _credentials(provider, router_model=router_model)
+    if credentials is None or _breaker_until.get(provider, 0.0) > monotonic():
         return None
     base_url, api_key, model, timeout = credentials
     started = perf_counter()
@@ -80,15 +98,27 @@ def _request(provider: str, messages: list[dict], tools: list[dict] | None, temp
             if tools:
                 options.update({"tools": tools, "tool_choice": "auto"})
             response = client.chat.completions.create(**options)
-            _circuit_until.pop(provider, None)
-            return provider, model, response.choices[0].message, int((perf_counter() - started) * 1000)
+            _breaker_until.pop(provider, None)
+            message = response.choices[0].message
+            latency_ms = int((perf_counter() - started) * 1000)
+            if structured:
+                usage = getattr(response, "usage", None)
+                return ProviderResponse(
+                    message=message,
+                    provider=provider,
+                    model=model,
+                    latency_ms=latency_ms,
+                    tokens_in=getattr(usage, "prompt_tokens", None),
+                    tokens_out=getattr(usage, "completion_tokens", None),
+                )
+            return provider, model, message, latency_ms
         except Exception as exc:
             logger.warning("AI provider %s failed on attempt %s (%s)", provider, attempt + 1, type(exc).__name__)
             if attempt >= settings.llm_max_retries or not _transient(exc):
-                _circuit_until[provider] = monotonic() + 60.0
+                _breaker_until[provider] = monotonic() + 60.0
                 return None
             delay = _retry_after(exc)
-            sleep(delay if delay is not None else min(0.5 * (2**attempt), 2.0))
+            time.sleep(delay if delay is not None else min(0.5 * (2**attempt), 2.0))
     return None
 
 
@@ -97,9 +127,26 @@ def provider_order() -> list[str]:
     return [provider for provider in ordered if provider in {"groq", "hf", "ollama"}]
 
 
-def chat_completion(messages: list[dict], tools: list[dict]):
+def _within_daily_budget(db: Session | None, tokens_used_this_run: int) -> bool:
+    budget = settings.llm_daily_token_budget
+    if budget <= 0:
+        return False
+    if db is None:
+        return True
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    used = db.scalar(
+        select(func.coalesce(func.sum(func.coalesce(AIRun.tokens_in, 0) + func.coalesce(AIRun.tokens_out, 0)), 0))
+        .where(AIRun.provider.is_not(None), AIRun.created_at >= day_start)
+    )
+    return int(used or 0) + tokens_used_this_run < budget
+
+
+def chat_completion(messages: list[dict], tools: list[dict] | None = None, *, router_model: bool = False, db=None, tokens_used_this_run: int = 0):
+    if not _within_daily_budget(db, tokens_used_this_run):
+        return None
+    structured = router_model or db is not None or tokens_used_this_run > 0 or not tools
     for provider in provider_order():
-        result = _request(provider, messages, tools or None, temperature=0.1)
+        result = _request(provider, messages, tools or None, temperature=0.1, router_model=router_model, structured=structured)
         if result is not None:
             return result
     return None

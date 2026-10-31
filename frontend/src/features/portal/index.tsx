@@ -11,23 +11,23 @@ import { EmptyState, ErrorState, LoadingState, Screen } from "../../components/S
 import { RoleGuard } from "../../app/RoleGuard";
 
 type PortalSection = "subscriptions" | "invoices" | "payments";
-type Plan = { id: number; name: string; closable: boolean; is_active: boolean };
+type PlanOption = { id: number; name?: string; closable: boolean };
 
 function PortalPage() {
   const [section, setSection] = useState<PortalSection>("subscriptions"); const [pageNumber, setPageNumber] = useState(1); const pageSize = 20;
   const [closeCandidate, setCloseCandidate] = useState<Subscription | null>(null); const [notice, setNotice] = useState(""); const queryClient = useQueryClient();
   const mockMode = import.meta.env.VITE_USE_MOCKS === "true";
   const result = useQuery({ queryKey: ["portal", section, pageNumber], queryFn: () => apiRequest<Page<Subscription | Invoice | Payment>>(`/portal/${section}?page=${pageNumber}&page_size=${pageSize}`) });
-  const plans = useQuery({ queryKey: ["portal", "plans"], queryFn: () => apiRequest<Page<Plan>>("/plans?page=1&page_size=100"), enabled: section === "subscriptions" });
+  const plans = useQuery({ queryKey: ["portal", "plans"], queryFn: () => apiRequest<Page<PlanOption>>("/plans?page=1&page_size=100"), enabled: section === "subscriptions" && !mockMode });
   const closeRequest = useMutation({ mutationFn: (subscription: Subscription) => apiRequest(`/subscriptions/${subscription.id}/close`, { method: "POST" }), onSuccess: async () => { setCloseCandidate(null); setNotice("The subscription has been closed."); await queryClient.invalidateQueries({ queryKey: ["portal", "subscriptions"] }); } });
   const tabs: { key: PortalSection; label: string }[] = [{ key: "subscriptions", label: "Subscriptions" }, { key: "invoices", label: "Invoices" }, { key: "payments", label: "Payments" }];
   let columns: Column<Subscription | Invoice | Payment>[] = [];
   if (section === "subscriptions") columns = [
     { key: "number", header: "Subscription", render: (row) => <span className="font-semibold">{(row as Subscription).number}</span> },
-    { key: "plan", header: "Plan", render: (row) => `Plan #${(row as Subscription).plan_id}` },
+    { key: "plan", header: "Plan", render: (row) => { const sub = row as Subscription; return sub.plan_name ?? `Plan #${sub.plan_id}`; } },
     { key: "status", header: "Status", render: (row) => <div className="flex gap-2"><StatusChip status={(row as Subscription).status} />{(row as Subscription).is_paused && <StatusChip status="paused" />}</div> },
     { key: "next", header: "Next invoice", render: (row) => (row as Subscription).next_invoice_date ?? "—" },
-    { key: "action", header: "Action", render: (row) => { const subscription = row as Subscription; const canClose = plans.data?.items.find((plan) => plan.id === subscription.plan_id)?.closable; return subscription.status === "active" && canClose ? <button onClick={() => setCloseCandidate(subscription)} className="text-sm font-semibold text-indigo-700 hover:underline">Close subscription</button> : "—"; } },
+    { key: "action", header: "Action", render: (row) => { const subscription = row as Subscription; const canClose = subscription.status === "active" && (subscription.closable ?? plans.data?.items.find((plan) => plan.id === subscription.plan_id)?.closable); return canClose ? <button onClick={() => setCloseCandidate(subscription)} className="text-sm font-semibold text-indigo-700 hover:underline">Close subscription</button> : "—"; } },
   ];
   if (section === "invoices") columns = [
     { key: "number", header: "Invoice", render: (row) => (row as Invoice).number },
@@ -39,7 +39,7 @@ function PortalPage() {
   ];
   if (section === "payments") columns = [
     { key: "date", header: "Paid on", render: (row) => (row as Payment).paid_on },
-    { key: "invoice", header: "Invoice", render: (row) => `Invoice #${(row as Payment).invoice_id}` },
+    { key: "invoice", header: "Invoice", render: (row) => { const payment = row as Payment; return payment.invoice_number ?? `Invoice #${payment.invoice_id}`; } },
     { key: "method", header: "Method", render: (row) => <span className="capitalize">{(row as Payment).method.replaceAll("_", " ")}</span> },
     { key: "amount", header: "Amount", render: (row) => <Money amount={(row as Payment).amount} /> },
   ];

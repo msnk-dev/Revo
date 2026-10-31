@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable
+import json
+import logging
+import re
+from typing import Any, Callable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.deps import Actor
@@ -21,7 +24,14 @@ from app.ai.schemas import (
     ProposeReminderArgs,
     RevenueArgs,
     SummaryArgs,
+    DateRangeArgs,
+    LimitArgs,
+    ReminderProposalArgs,
+    ToolArgs,
 )
+
+logger = logging.getLogger(__name__)
+EMAIL_PATTERN = re.compile(r"(?i)(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Z]{2,}(?![\w.-])")
 
 
 @dataclass
@@ -29,6 +39,7 @@ class ToolContext:
     db: Session
     actor: Actor
     proposal: dict | None = None
+    user_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -182,9 +193,129 @@ def available_tools(actor: Actor) -> list[Tool]:
     return [tool for tool in TOOLS if actor.role in tool.roles]
 
 
-def execute_tool(name: str, arguments: object, context: ToolContext):
+def execute_tool(name: str, arguments: object, context: ToolContext, agent: str | None = None):
+    if agent is not None:
+        return _execute_agent_tool(name, arguments, context, agent)
     tool = TOOL_BY_NAME.get(name)
     if tool is None or context.actor.role not in tool.roles:
         raise ForbiddenError("This assistant tool is unavailable for this account")
     payload = tool.args.model_validate(arguments)
     return _json(tool.handler(payload, context))
+
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    name: str
+    description: str
+    args_model: type[ToolArgs]
+    roles: frozenset[str]
+    handler: Callable[[ToolContext, ToolArgs], Any]
+
+    def openai_schema(self) -> dict[str, Any]:
+        return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": self.args_model.model_json_schema()}}
+
+
+STAFF = frozenset({"admin", "staff"})
+ALL = frozenset({"admin", "staff", "customer"})
+
+
+def _agent_summary(context: ToolContext, args: ToolArgs) -> Any:
+    params = DateRangeArgs.model_validate(args)
+    return reports.get_summary(context.db, params.date_from, params.date_to)
+
+
+def _agent_revenue_by_month(context: ToolContext, args: ToolArgs) -> Any:
+    params = DateRangeArgs.model_validate(args)
+    return reports.get_revenue_by_month(context.db, params.date_from, params.date_to)[:50]
+
+
+def _agent_breakdown(context: ToolContext, args: ToolArgs) -> Any:
+    return reports.get_active_subscriptions_breakdown(context.db)
+
+
+def _agent_overdue_summary(context: ToolContext, args: ToolArgs) -> Any:
+    return reports.get_overdue_summary(context.db)
+
+
+def _agent_list_overdue(context: ToolContext, args: ToolArgs) -> Any:
+    params = LimitArgs.model_validate(args)
+    return reports.list_overdue(context.db, limit=min(params.limit, 50))
+
+
+def _agent_payment_history(context: ToolContext, args: ToolArgs) -> Any:
+    params = PaymentHistoryArgs.model_validate(args)
+    if params.customer_id is None:
+        raise ValidationFailed("A customer ID is required")
+    if context.actor.role == "customer" and params.customer_id != context.actor.customer_id:
+        raise NotFoundError("Customer not found")
+    return customers.get_payment_history(context.db, params.customer_id, limit=min(params.limit, 50))
+
+
+def _agent_invoice_breakdown(context: ToolContext, args: ToolArgs) -> Any:
+    params = InvoiceArgs.model_validate(args)
+    return billing.get_invoice_breakdown(context.db, context.actor, params.invoice_id)
+
+
+def _agent_reminder_proposal(context: ToolContext, args: ToolArgs) -> dict[str, Any]:
+    params = ReminderProposalArgs.model_validate(args)
+    if params.recipient_email.casefold() not in {value.casefold() for value in EMAIL_PATTERN.findall(context.user_message)}:
+        raise ValidationFailed("The reminder recipient must be provided explicitly by the staff member")
+    overdue = reports.list_overdue(context.db, limit=50)
+    invoice = next((item for item in overdue if item.invoice_id == params.invoice_id), None)
+    if invoice is None:
+        raise NotFoundError("Overdue invoice not found")
+    return {"kind": "send_reminder", "invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number,
+            "customer_name": invoice.customer_name, "recipient_email": str(params.recipient_email),
+            "subject": params.subject, "body": params.body}
+
+
+TOOL_REGISTRY: dict[str, ToolDefinition] = {
+    "get_summary": ToolDefinition("get_summary", "Get deterministic subscription and revenue summary for a date range.", DateRangeArgs, STAFF, _agent_summary),
+    "get_revenue_by_month": ToolDefinition("get_revenue_by_month", "Get collected and invoiced totals by month for a date range.", DateRangeArgs, STAFF, _agent_revenue_by_month),
+    "get_active_subscriptions_breakdown": ToolDefinition("get_active_subscriptions_breakdown", "Get active and paused subscription counts grouped by plan.", EmptyArgs, STAFF, _agent_breakdown),
+    "get_overdue_summary": ToolDefinition("get_overdue_summary", "Get deterministic count and amount for overdue invoices.", EmptyArgs, STAFF, _agent_overdue_summary),
+    "list_overdue_invoices": ToolDefinition("list_overdue_invoices", "List at most 50 overdue invoices.", LimitArgs, STAFF, _agent_list_overdue),
+    "get_customer_payment_history": ToolDefinition("get_customer_payment_history", "Get bounded payment history for one customer.", PaymentHistoryArgs, STAFF, _agent_payment_history),
+    "get_invoice_breakdown": ToolDefinition("get_invoice_breakdown", "Get the authorized deterministic invoice line breakdown.", InvoiceArgs, ALL, _agent_invoice_breakdown),
+    "propose_send_reminder": ToolDefinition("propose_send_reminder", "Create a reminder email draft proposal; this tool never sends email.", ReminderProposalArgs, STAFF, _agent_reminder_proposal),
+}
+
+AGENT_TOOLS: dict[str, tuple[str, ...]] = {
+    "revenue_insights": ("get_summary", "get_revenue_by_month", "get_active_subscriptions_breakdown", "get_overdue_summary"),
+    "invoice_explainer": ("get_invoice_breakdown",),
+    "collections": ("list_overdue_invoices", "get_customer_payment_history", "propose_send_reminder"),
+}
+
+
+def schemas_for_agent(agent: str) -> list[dict[str, Any]]:
+    return [TOOL_REGISTRY[name].openai_schema() for name in AGENT_TOOLS[agent]]
+
+
+def _execute_agent_tool(name: str, raw_arguments: object, context: ToolContext, agent: str) -> tuple[Any, dict[str, Any] | None]:
+    if name not in AGENT_TOOLS.get(agent, ()):
+        return {"error": "Tool is not available to this agent."}, None
+    definition = TOOL_REGISTRY[name]
+    if context.actor.role not in definition.roles:
+        return {"error": "Not authorized for this tool."}, None
+    try:
+        if isinstance(raw_arguments, str):
+            args = definition.args_model.model_validate_json(raw_arguments)
+        else:
+            args = definition.args_model.model_validate(raw_arguments)
+    except (ValidationError, ValueError) as exc:
+        return {"error": "Invalid tool arguments.", "validation": str(exc)[:1000]}, None
+    try:
+        result = definition.handler(context, args)
+    except (NotFoundError, ForbiddenError, ValidationFailed) as exc:
+        return {"error": str(exc)}, None
+    except Exception:
+        logger.exception("AI tool %s failed", name)
+        return {"error": "Tool failed; no data was returned."}, None
+    if isinstance(result, dict) and result.get("kind") == "send_reminder":
+        return ({"draft_created": True, "invoice_number": result["invoice_number"], "customer_name": result["customer_name"],
+                 "subject": result["subject"], "body": result["body"], "confirmation_required": True}, result)
+    if isinstance(result, BaseModel):
+        return result.model_dump(mode="json"), None
+    if isinstance(result, list):
+        return [item.model_dump(mode="json") if isinstance(item, BaseModel) else item for item in result[:50]], None
+    return result, None

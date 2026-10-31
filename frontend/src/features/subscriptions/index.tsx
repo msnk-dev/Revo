@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
@@ -17,6 +17,19 @@ type Template = { id: number; name: string; plan_id: number; validity_days: numb
 type SubscriptionRecord = { id: number; number: string; customer_id: number; plan_id: number; status: "draft" | "quotation" | "confirmed" | "active" | "closed"; start_date: string; expiry_date: string | null; next_invoice_date: string | null; payment_terms_days: number; quotation_expires_on: string | null; is_paused: boolean; lines: { id: number; product_id: number; description: string; quantity: number; unit_price: string; tax_id: number | null; variant_value_ids: number[] }[]; history: { id: number; from_status: string | null; to_status: string; changed_at: string; changed_by: number | null }[] };
 type DisplaySubscription = SubscriptionRecord & { customer_name: string; plan_name: string; billing_period: Plan["billing_period"]; monthly_value: string; pausable: boolean; closable: boolean; renewable: boolean };
 const pageSize = 10;
+type CustomerOption = { id: number; name: string; email: string };
+type TemplateOption = { id: number; name: string; plan_id: number; validity_days: number };
+function CreateFromTemplate({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate(); const queryClient = useQueryClient();
+  const customers = useQuery({ queryKey: ["subscription-create", "customers"], queryFn: () => apiRequest<Page<CustomerOption>>("/customers?page=1&page_size=100") });
+  const templates = useQuery({ queryKey: ["subscription-create", "templates"], queryFn: () => apiRequest<Page<TemplateOption>>("/quotation-templates?page=1&page_size=100") });
+  const create = useMutation({ mutationFn: (input: { templateId: number; customer_id: number; start_date: string }) => apiRequest<SubscriptionRecord>(`/subscriptions/from-template/${input.templateId}`, { method: "POST", body: JSON.stringify({ customer_id: input.customer_id, start_date: input.start_date }) }), onSuccess: async (subscription) => { await queryClient.invalidateQueries({ queryKey: ["subscriptions"] }); navigate(`/subscriptions/${subscription.id}`); } });
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const values = new FormData(event.currentTarget);
+    create.mutate({ templateId: Number(values.get("template_id")), customer_id: Number(values.get("customer_id")), start_date: String(values.get("start_date")) });
+  }
+  return <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/35 p-4"><section role="dialog" aria-modal="true" aria-labelledby="create-sub-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-start justify-between"><div><h2 id="create-sub-title" className="text-lg font-semibold">Create from quotation template</h2><p className="mt-1 text-sm text-slate-500">The API copies the template lines and applies its validity period.</p></div><button type="button" onClick={onClose} aria-label="Close form" className="rounded px-2 text-slate-500">×</button></div>{customers.isLoading || templates.isLoading ? <p role="status" className="mt-5 text-sm text-slate-500">Loading customers and templates…</p> : customers.error || templates.error ? <p role="alert" className="mt-5 text-sm text-rose-700">Could not load customers or quotation templates.</p> : !customers.data?.items.length || !templates.data?.items.length ? <p className="mt-5 text-sm text-slate-500">Create at least one active customer and quotation template before starting a subscription.</p> : <form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Quotation template<select name="template_id" required className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5">{templates.data.items.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.validity_days} days</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Customer<select name="customer_id" required className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5">{customers.data.items.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Start date<input name="start_date" type="date" defaultValue={today()} required className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5" /></label>{create.error && <p role="alert" className="text-sm text-rose-700">{create.error instanceof Error ? create.error.message : "Could not create subscription."}</p>}<div className="flex justify-end gap-2"><button type="button" onClick={onClose} className={secondaryButton}>Cancel</button><button disabled={create.isPending} className={primaryButton}>{create.isPending ? "Creating…" : "Create quotation"}</button></div></form>}</section></div>;
+}
 
 function decimalCents(value: string): bigint { const [whole, fraction = ""] = value.split("."); return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2)); }
 function centsDecimal(value: bigint): string { const absolute = value < 0n ? -value : value; return `${value < 0n ? "-" : ""}${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`; }
@@ -36,7 +49,7 @@ function nextTransition(subscription: SubscriptionRecord): SubscriptionRecord["s
 }
 
 function SubscriptionList() {
-  const [page, setPage] = useState(1); const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1); const [status, setStatus] = useState(""); const [createOpen, setCreateOpen] = useState(false);
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) }); if (status) params.set("status", status);
   const result = useQuery({ queryKey: ["subscriptions", page, status], queryFn: () => apiRequest<Page<SubscriptionRecord>>(`/subscriptions?${params}`), refetchInterval: 15_000 });
   const customers = useQuery({ queryKey: ["customers", "lookup"], queryFn: () => apiRequest<Page<Customer>>("/customers?page=1&page_size=100") });
@@ -53,9 +66,10 @@ function SubscriptionList() {
     { key: "next", header: "Next invoice", render: (row) => row.next_invoice_date ? new Date(`${row.next_invoice_date}T00:00:00`).toLocaleDateString("en-IN") : "—" },
     { key: "mrr", header: "Monthly value", render: (row) => <Money amount={row.monthly_value} /> },
   ], []);
-  return <Screen eyebrow="Billing" title="Subscriptions" description="Track subscription status, billing dates, and customer value." actions={<Link to="/subscriptions/new" className={primaryButton}>Create subscription</Link>}>
+  return <Screen eyebrow="Billing" title="Subscriptions" description="Track subscription status, billing dates, and customer value." actions={<div className="flex flex-wrap gap-2"><Link to="/subscriptions/new" className={primaryButton}>Create subscription</Link><button type="button" onClick={() => setCreateOpen(true)} className={secondaryButton}>Create from template</button></div>}>
     <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4"><select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All statuses</option>{["draft", "quotation", "confirmed", "active", "closed"].map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setStatus(""); setPage(1); }} className={secondaryButton}>Clear filter</button></div>
     {result.isLoading || customers.isLoading || plans.isLoading ? <LoadingState label="Loading subscriptions…" /> : result.error || customers.error || plans.error ? <ErrorState message="Could not load subscriptions or their customer and plan details." onRetry={() => { void result.refetch(); void customers.refetch(); void plans.refetch(); }} /> : result.data?.total === 0 ? <EmptyState title="No subscriptions found" description="Create a subscription for an existing customer and plan." action={<Link to="/subscriptions/new" className={primaryButton}>Create subscription</Link>} /> : <DataTable rows={rows} columns={columns} rowKey={(row) => row.id} page={page} pageSize={pageSize} total={result.data?.total ?? 0} onPageChange={setPage} />}
+    {createOpen && <CreateFromTemplate onClose={() => setCreateOpen(false)} />}
   </Screen>;
 }
 

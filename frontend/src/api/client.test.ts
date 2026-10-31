@@ -64,4 +64,10 @@ describe("API client CSRF headers", () => {
       details: { name: "Field is required" },
     });
   });
+
+  it("exposes backend authorization errors with status and message", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "forbidden", message: "Admin role required", details: {} } }), { status: 403, headers: { "Content-Type": "application/json" } }));
+
+    await expect(apiRequest("/admin/staff")).rejects.toMatchObject({ status: 403, code: "forbidden", message: "Admin role required" });
+  });
 });

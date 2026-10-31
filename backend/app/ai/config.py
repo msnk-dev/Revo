@@ -10,6 +10,7 @@ class AISettings(BaseSettings):
     llm_provider_order: str = "groq,hf,ollama"
     groq_api_key: str | None = None
     groq_model: str = ""
+    groq_router_model: str = ""
     hf_token: str | None = None
     hf_model: str = ""
     ollama_base_url: str = "http://host.docker.internal:11434/v1"

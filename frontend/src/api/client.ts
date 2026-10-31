@@ -4,11 +4,13 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/
 const csrfMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly status: number, readonly details: Record<string, string> = {}) {
+  constructor(message: string, readonly status: number, readonly details: Record<string, string> = {}, readonly code?: string) {
     super(message);
     this.name = "ApiRequestError";
   }
 }
+
+export { ApiRequestError as ApiError };
 
 function errorDetails(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -49,15 +51,21 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     let details: Record<string, string> = {};
+    let code: string | undefined;
     try {
-      const payload = await response.json() as { error?: { message?: string; details?: unknown } };
-      const error = payload.error;
+      const payload = await response.json() as { error?: { message?: string; code?: string; details?: unknown } };
+      const error = payload?.error;
       details = errorDetails(error?.details);
-      message = error?.message ?? message;
+      code = error?.code;
+      message = error?.message ?? (response.status === 401
+        ? "Your session has expired. Sign in again."
+        : response.status === 403
+          ? "You do not have permission to do this."
+          : message);
     } catch {
       // Keep the HTTP status message when the server response is not JSON.
     }
-    throw new ApiRequestError(message, response.status, details);
+    throw new ApiRequestError(message, response.status, details, code);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

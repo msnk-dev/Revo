@@ -14,7 +14,7 @@ function PaymentsPage() {
   const query = useQuery({ queryKey: ["payments", page], queryFn: () => apiRequest<Page<Payment>>(`/payments?page=${page}&page_size=${pageSize}`) });
   const columns: Column<Payment>[] = [
     { key: "date", header: "Paid on", render: (row) => new Date(`${row.paid_on}T00:00:00`).toLocaleDateString("en-IN") },
-    { key: "invoice", header: "Invoice", render: (row) => <Link to={`/invoices/${row.invoice_id}`} className="font-semibold text-indigo-700">Invoice #{row.invoice_id}</Link> },
+    { key: "invoice", header: "Invoice", render: (row) => <Link to={`/invoices/${row.invoice_id}`} className="font-semibold text-indigo-700">{row.invoice_number ?? `Invoice #${row.invoice_id}`}</Link> },
     { key: "method", header: "Method", render: (row) => <span className="capitalize">{row.method.replaceAll("_", " ")}</span> },
     { key: "amount", header: "Amount", render: (row) => <Money amount={row.amount} /> },
   ];

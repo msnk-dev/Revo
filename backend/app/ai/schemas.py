@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class StrictModel(BaseModel):
@@ -32,7 +32,7 @@ class ChatOut(StrictModel):
 
 class ActionOut(StrictModel):
     id: int
-    status: Literal["confirmed", "rejected"]
+    status: Literal["confirmed", "rejected", "sent"]
     result: dict = Field(default_factory=dict)
 
 
@@ -85,3 +85,28 @@ class ProposeReminderArgs(StrictModel):
     invoice_id: int = Field(gt=0)
     subject: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=4000)
+
+
+class ToolArgs(StrictModel):
+    pass
+
+
+class DateRangeArgs(ToolArgs):
+    date_from: date = Field(alias="from")
+    date_to: date = Field(alias="to")
+
+
+class LimitArgs(ToolArgs):
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class ReminderProposalArgs(ToolArgs):
+    invoice_id: int = Field(gt=0)
+    recipient_email: EmailStr
+    subject: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class RouteDecision(StrictModel):
+    agent: str | None
+    intent: str = Field(max_length=120)

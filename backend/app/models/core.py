@@ -27,10 +27,12 @@ class User(TimestampMixin, Base):
     __table_args__ = (CheckConstraint("role IN ('admin', 'staff', 'customer')", name="ck_users_role"),)
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(160))
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 Index("uq_users_email_lower", func.lower(User.email), unique=True)
@@ -101,7 +103,7 @@ class ProductVariantValue(TimestampMixin, Base):
     )
 
     attribute_id: Mapped[int] = mapped_column(
-        ForeignKey("product_variant_attributes.id", ondelete="CASCADE"), nullable=False
+        BigInteger, ForeignKey("product_variant_attributes.id", ondelete="CASCADE"), nullable=False
     )
     value: Mapped[str] = mapped_column(String(100), nullable=False)
     extra_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
@@ -281,7 +283,10 @@ class InvoiceLine(TimestampMixin, Base):
     description: Mapped[str] = mapped_column(String(240), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    variant_extra: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     discount_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("discounts.id", ondelete="SET NULL"))
+    discount_name: Mapped[str | None] = mapped_column(String(160))
+    discount_reason: Mapped[str | None] = mapped_column(String(240))
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     tax_name: Mapped[str | None] = mapped_column(String(100))
     tax_rate_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))

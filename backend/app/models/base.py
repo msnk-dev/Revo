@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Identity
+from sqlalchemy import BigInteger, DateTime, Identity, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False

@@ -29,6 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://revo:revo@postgres:5432/revo
       SMTP_HOST: mailhog
+      ENABLE_SCHEDULER: "true"
     ports:
       - "8000:8000"
     depends_on:

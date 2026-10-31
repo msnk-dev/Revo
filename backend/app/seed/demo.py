@@ -1,5 +1,7 @@
 from datetime import date
 from decimal import Decimal
+import os
+import secrets
 
 from argon2 import PasswordHasher
 from sqlalchemy import func, select
@@ -24,7 +26,8 @@ from app.models import (
 )
 
 ADMIN_EMAIL = "admin@revo.local"
-ADMIN_PASSWORD = "RevoDemoAdmin1!"
+ADMIN_PASSWORD = os.environ.get("REVO_DEMO_ADMIN_PASSWORD") or f"{secrets.token_urlsafe(18)}A!"
+CUSTOMER_PASSWORD = os.environ.get("REVO_DEMO_CUSTOMER_PASSWORD") or f"{secrets.token_urlsafe(18)}B!"
 
 
 def seed_demo_data() -> None:
@@ -32,13 +35,13 @@ def seed_demo_data() -> None:
     with SessionLocal.begin() as db:
         existing = db.scalar(select(User).where(func.lower(User.email) == ADMIN_EMAIL))
         if existing:
-            print(f"Demo data already exists. Admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+            print(f"Demo data already exists. Admin login: {ADMIN_EMAIL}; the original password is unchanged.")
             return
 
         admin = User(email=ADMIN_EMAIL, password_hash=hasher.hash(ADMIN_PASSWORD), role="admin", is_active=True)
         customer_user = User(
             email="customer@revo.local",
-            password_hash=hasher.hash("RevoCustomer1!"),
+            password_hash=hasher.hash(CUSTOMER_PASSWORD),
             role="customer",
             is_active=True,
         )
@@ -132,7 +135,7 @@ def seed_demo_data() -> None:
         )
 
     print(f"Demo data loaded. Admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
-    print("Customer login: customer@revo.local / RevoCustomer1!")
+    print(f"Customer login: customer@revo.local / {CUSTOMER_PASSWORD}")
 
 
 if __name__ == "__main__":

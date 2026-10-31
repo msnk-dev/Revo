@@ -11,3 +11,17 @@ class ValidationFailed(Exception):
         super().__init__(message)
         self.details = details or {}
 
+
+class ConflictError(Exception):
+    def __init__(self, message: str, details: dict[str, str] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
+
+class AuthenticationError(Exception):
+    pass
+
+
+class RateLimitExceeded(Exception):
+    pass
+

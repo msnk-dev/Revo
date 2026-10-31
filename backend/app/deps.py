@@ -32,6 +32,8 @@ def get_current_actor(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     try:
         payload = jwt.decode(credentials.credentials, settings.app_secret_key, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            raise ValueError("invalid token type")
         user_id = int(payload["sub"])
         role = payload["role"]
         if role not in {"admin", "staff", "customer"}:

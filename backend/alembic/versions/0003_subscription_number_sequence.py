@@ -2,7 +2,7 @@
 
 from alembic import op
 
-revision = "0003_subscription_number_sequence"
+revision = "0003_subscription_seq"
 down_revision = "0002_auth_token_version"
 branch_labels = None
 depends_on = None

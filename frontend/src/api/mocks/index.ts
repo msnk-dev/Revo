@@ -54,7 +54,7 @@ let invoices: DemoInvoice[] = [
 ];
 let payments: Payment[] = [{ id: 1, invoice_id: 2, invoice_number: "INV-000002", customer_name: "Brightloop Demo", amount: "21240.00", paid_on: "2026-10-15", method: "bank_transfer", note: "Demo payment" }];
 let nextPaymentId = 2;
-let staff = [{ id: 1, name: "Demo Admin", email: "admin@revo.local", role: "admin" as const, is_active: true }];
+let staff: { id: number; name: string; email: string; role: "admin" | "staff"; is_active: boolean }[] = [{ id: 1, name: "Demo Admin", email: "admin@revo.local", role: "admin", is_active: true }];
 
 function pageOf<T>(items: T[], path: string): Page<T> {
   const url = new URL(path, "http://mock.local");

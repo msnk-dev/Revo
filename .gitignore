@@ -1,18 +1,47 @@
+# Local secrets and environment files
 .env
-.venv/
+.env.*
+!.env.example
+
+# Python
 __pycache__/
 *.py[cod]
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# uv
+.uv-cache/
+.uv-python/
+
+# Node and frontend build output
 node_modules/
 dist/
 build/
-coverage.xml
-htmlcov/
-*.egg-info
-backend/.venv/
-backend/.env
-backend/.pytest_cache/
+coverage/
+*.tsbuildinfo
 
-.uv-cache/
-.uv-python/
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

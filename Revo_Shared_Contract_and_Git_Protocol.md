@@ -1,4 +1,4 @@
-# Brightloop — Shared Contract and Git Protocol (both people attach this + the main spec)
+# Revo — Shared Contract and Git Protocol (both people attach this + the main spec)
 
 Purpose: two people build in parallel without touching the same files. Conflicts are prevented by **path ownership**, a **frozen interface**, and a **script that fails if you touch someone else's path**. Person A commits this file as `docs/contracts.md`.
 
@@ -127,9 +127,9 @@ exit "$bad"
 ```bash
 #!/usr/bin/env bash
 git fetch -q origin main
-exec scripts/check_ownership.sh "$(git config brightloop.role)" origin/main
+exec scripts/check_ownership.sh "$(git config revo.role)" origin/main
 ```
-Each person once: `git config core.hooksPath .githooks && git config brightloop.role A` (or `B`). Make both files executable (`chmod +x`). Limits: it only checks paths, not file contents, and anyone can bypass with `git push --no-verify`; the real protection is the habit plus PR review via `CODEOWNERS`.
+Each person once: `git config core.hooksPath .githooks && git config revo.role A` (or `B`). Make both files executable (`chmod +x`). Limits: it only checks paths, not file contents, and anyone can bypass with `git push --no-verify`; the real protection is the habit plus PR review via `CODEOWNERS`.
 
 `CODEOWNERS` (later lines win on GitHub; replace handles):
 ```

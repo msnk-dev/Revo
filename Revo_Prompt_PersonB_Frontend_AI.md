@@ -1,10 +1,10 @@
 # Prompt for Person B (paste as the first message, with the 2 files attached)
 
-Attach: `Brightloop_Subscription_Management_PROJECT_SPEC.md` and `Brightloop_Shared_Contract_and_Git_Protocol.md`.
+Attach: `Revo_Subscription_Management_PROJECT_SPEC.md` and `Revo_Shared_Contract_and_Git_Protocol.md`.
 
 ---
 
-You are the frontend + AI engineer on Brightloop. I am **Person B** on a 2-person team building the spec I attached, as a hackathon demo in 2-3 days. My teammate (**Person A**) builds the backend core in parallel. Read both attached files fully before answering.
+You are the frontend + AI engineer on Revo. I am **Person B** on a 2-person team building the spec I attached, as a hackathon demo in 2-3 days. My teammate (**Person A**) builds the backend core in parallel. Read both attached files fully before answering.
 
 **What I own** (the only paths you may write to): `frontend/**` **except** `frontend/src/features/{catalog,customers,reports,staff}/` (those are Person A's after Block 0); `backend/app/ai/**`; `backend/tests/ai/**`; `docs/ai.md`; `frontend/package.json` and its lockfile.
 

@@ -1,4 +1,4 @@
-# Brightloop — Subscription Management System — Complete Project Specification
+# Revo — Subscription Management System — Complete Project Specification
 
 > Hand this entire file to ChatGPT (or any coding LLM) as the first message. It is self-contained.
 
@@ -19,15 +19,14 @@ You are the lead engineer. Build the system described below, end to end.
 6. Give complete runnable files (no `# rest of code here`). For small edits to existing files, show only the changed section with enough context to place it.
 7. Do not add features outside §1 and §14 (out of scope). Mention nice-to-haves separately at the end.
 8. Prefer minimal comments; code should be self-explanatory. Keep prose short.
-9. Exception to brevity: after each milestone, add 3-5 lines explaining the non-obvious parts and why, and a short entry in `docs/decisions.md` (backend) or `docs/ai.md` (AI). The team must be able to defend every line to judges. Also meet the criteria in section 1b; they are judged.
 
 ---
 
 ## 1. Product summary
 
-**Product name:** Brightloop (the platform being built).
+**Product name:** Revo (the platform being built).
 
-**Client:** Brightloop Software — sells software on subscription (monthly/yearly), with add-ons and product variants. Customers range from small shops (monthly) to large companies (yearly). use "Brightloop" for the app, repo, UI branding and emails.
+**Client:** Brightloop Software — sells software on subscription (monthly/yearly), with add-ons and product variants. Customers range from small shops (monthly) to large companies (yearly). Brightloop is the business using Revo; use "Revo" for the app, repo, UI branding and emails.
 
 **Problem today:** spreadsheet subscriptions, missed renewals, hand-typed invoices, payments matched by scrolling bank statements, quarterly manual revenue reports. Nobody knows true recurring revenue.
 
@@ -39,23 +38,6 @@ You are the lead engineer. Build the system described below, end to end.
 | Admin | Everything. Only role that can create staff, discounts, taxes, products, plans. |
 | Staff (internal) | Day-to-day: customers, quotations, subscriptions, invoices, payments, reports (read). No config, no user management. |
 | Customer | Portal only: own subscriptions, own invoices, own payments. Read-mostly. |
-
----
-
-## 1b. Hackathon evaluation criteria (judges check these; treat as requirements)
-
-**Must have**
-1. **Real or dynamic data, not static JSON.** Every screen reads from PostgreSQL through the API. The seed script writes to the DB; no JSON file is ever served to the UI. Frontend mock fixtures (`VITE_USE_MOCKS`) exist for prototyping only, default **off**, and must be off in the demo build. Live feel: TanStack Query `refetchInterval` (~15 s, polling rather than websockets for simplicity) on the dashboard, overdue list and invoice lists, plus cache invalidation after every mutation. Proof: record a payment in one browser tab and watch the dashboard numbers change in another.
-2. **Responsive, clean, consistent UI.** One Tailwind theme (palette, type scale, spacing scale) defined once as tokens; no ad-hoc colors. Verified at 375, 768 and 1280 px; wide tables scroll horizontally or collapse to cards on mobile.
-3. **Robust input validation, on both sides.** Server is authoritative: Pydantic v2 models with constraints and `extra="forbid"`, plus the DB `CHECK`/unique constraints in section 5. Client mirrors the same rules for instant feedback. Field-level errors (`{error:{code,message,details:{field:message}}}`) render under the field. Rules include: email normalized and format-checked; string max lengths; money non-negative with at most 2 decimals; date ordering (expiry >= start, discount end >= start); quantity >= plan minimum; enums whitelisted; page size clamped; request body size limit; HTML auto-escaped in PDFs and emails (Jinja autoescape on). One test per rule.
-4. **Intuitive navigation.** Persistent left sidebar (hamburger drawer on mobile), grouped by task: Sales (customers, subscriptions, quotation templates), Billing (invoices, payments), Insights (dashboard, reports, AI), Admin (catalog, discounts, taxes, staff; admin only). Role-specific menus, active-item highlight, breadcrumbs on detail pages, the primary action button in the same place on every list, one spacing scale (4/8 px based), empty and 404 states, visible keyboard focus.
-5. **Version control by the whole team.** Both people commit from the first hour under their own accounts, open PRs, and review each other's PRs (`CODEOWNERS` enforces it). Conventional commit messages (`feat(billing): ...`). No giant one-person commits, and one person must not act as the repo's sole manager. Proof: `git shortlog -sn` and the PR list show both members across all days.
-
-**Nice to have**
-6. **Backend design, data model, local DB.** OpenAPI docs, an ERD (`docs/erd.md`, Mermaid, generated from section 5), Alembic migrations, `make up` starts a local Postgres via docker-compose, `make seed` loads demo data.
-7. **Understand what you ship.** Every person must be able to explain every module they own. After each milestone the AI assistant adds 3-5 lines on the non-obvious parts and why, and records the decision in `docs/decisions.md` (A) or `docs/ai.md` (B). Snippets in this spec (e.g. section 11.5) are references to adapt, not paste-ready code. Rehearse before the demo. A: billing idempotency, discount choice, tax and rounding, row-level scoping. B: provider failover, tool-argument validation, the number guard, proposal/confirm.
-8. **Local-first / offline.** The whole stack runs locally (docker-compose for postgres, mailhog, api; the web app via Vite or nginx). **No CDN scripts, fonts or icons at runtime**; bundle them through npm. PDF and email are local. AI provider order ends with a local Ollama model, then deterministic templated text. The latest CFO brief is stored in the DB, so the dashboard works offline. Honest caveat: a small local model is worse at tool calling; the deterministic fallback is the actual guarantee.
-9. **Trendy tech only where it adds value.** No agent frameworks (plain Python loop), no vector DB, no blockchain. The LLM is used only where language is the value (natural-language question to tool choice, narrating an invoice breakdown, drafting reminders, the daily brief). Billing, discount and tax math are plain code on purpose. `docs/ai.md` must contain a short "Why AI here, and what it deliberately does not do" section.
 
 ---
 
@@ -106,7 +88,6 @@ The source brief is silent or vague on these. Implement exactly as stated.
 | AI | `openai` Python SDK pointed at Groq / Hugging Face OpenAI-compatible endpoints (§11) | One client, swappable base URL |
 | Tests | pytest, httpx, pytest-asyncio | |
 | Infra | docker-compose: `postgres`, `api`, `web`, `mailhog` | |
-| Local-first | Everything runs locally (docker-compose); no CDN fonts/scripts/icons; Ollama local model as AI fallback | Offline demo requirement (section 1b #8) |
 
 Pin exact versions in `pyproject.toml`/`package.json` and tell me which you chose. Do not mix sync and async DB sessions; **use sync SQLAlchemy sessions** unless you have a reason (simpler with APScheduler and transactions).
 
@@ -308,18 +289,14 @@ Use the `openai` SDK with a swappable `base_url`:
 |---|---|---|---|
 | Groq (primary) | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | Endpoint and OpenAI-compatible tool calling **verified** in docs/third-party sources |
 | Hugging Face Inference Providers (fallback) | `https://router.huggingface.co/v1` | `HF_TOKEN` | **Believed**, not verified — check HF docs for current URL, free-credit limits, and which models support tool calling |
-| Ollama (local, offline) | `http://localhost:11434/v1` | dummy key | OpenAI-compatible endpoint and tool calling on supported models **verified** in Ollama docs/guides; not every parameter (e.g. `response_format`) works on every model; test your pulled model |
 | None (deterministic fallback) | — | — | Return templated answers from tool outputs; AI panel shows "AI offline" |
 
 Env config (never hardcode model IDs):
 ```
-LLM_PROVIDER_ORDER=groq,hf,ollama
+LLM_PROVIDER_ORDER=groq,hf
 GROQ_MODEL=llama-3.3-70b-versatile     # verified to support tool calling; catalog churns, re-check at https://console.groq.com/docs/models
 GROQ_ROUTER_MODEL=llama-3.1-8b-instant # cheap router only; reported to be flaky at tool calls → don't use it for tool loops
 HF_MODEL=<choose after checking HF's current tool-calling-capable models>
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=<a small model you have pulled that Ollama lists under its Tools category>
-OLLAMA_API_KEY=ollama   # SDK needs a non-empty value; Ollama ignores it
 LLM_TIMEOUT_S=20
 LLM_MAX_RETRIES=2
 LLM_DAILY_TOKEN_BUDGET=...
@@ -356,8 +333,6 @@ def chat(messages, tools=None, order=("groq", "hf")):
             last = e
     raise RuntimeError(f"all providers failed: {last}")
 ```
-Skeleton note: it skips providers that have no key, but Ollama needs only a dummy key, so special-case it (try it only if its URL answers). Offline demos must not hang: use a short connect timeout (~3 s) and a circuit breaker that skips a provider that just failed for ~60 s.
-
 Build the agent loop around it: call → if `tool_calls`, validate args → execute tool under caller identity → append `tool` message → repeat (≤4) → final answer → guard.
 
 ### 11.6 AI safety rules
@@ -426,7 +401,7 @@ Real payment gateways/webhooks, proration, multi-currency, multi-tenant, usage-b
 11. **Seed + performance run** (§9) and fix misses.
 12. **Jobs** (§12).
 13. **AI layer** (§11): providers → tools → router → Revenue Insights agent → Invoice Explainer → CFO brief job + guard → Collections agent (draft + confirm flow) → remaining agents only if time allows → tests.
-14. **Hardening:** §10 checklist, README with setup + demo script, `docs/erd.md`, `docs/decisions.md`, and a run through the section 1b criteria (mocks off, responsive check, validation tests, offline run, git history shows both members).
+14. **Hardening:** §10 checklist, README with setup + demo script.
 
 ---
 
@@ -436,8 +411,7 @@ Give each person the full spec plus one line: "I own only the items listed for P
 
 **Ownership (no shared files, so no merge fights)**
 - **Person A, backend core:** `backend/` except `app/ai/`. Milestones 1-9, 11, 12 and 14 (hardening).
-- **Person B, frontend + AI:** `frontend/` and `backend/app/ai/`. Milestones 10 and 13, plus the CFO brief function. Exception: once the backend endpoints exist, Person A builds the four admin CRUD screens in `frontend/src/features/{catalog,customers,reports,staff}/` to balance load.
-- Exact path ownership, the frozen interface, git rules and the ownership-check script are in `Revo_Shared_Contract_and_Git_Protocol.md`; ready-to-paste prompts are `Revo_Prompt_PersonA_Backend.md` and `Revo_Prompt_PersonB_Frontend_AI.md`. Those files take precedence over this section.
+- **Person B, frontend + AI:** `frontend/` and `backend/app/ai/`. Milestones 10 and 13, plus jobs wiring for the CFO brief.
 - Only Person A edits Alembic migrations (avoids multiple migration heads).
 
 **Unblocking B from A (do in the first 3 hours, together)**
@@ -456,7 +430,7 @@ Give each person the full spec plus one line: "I own only the items listed for P
 
 **Rules:** one branch per milestone, merge to `main` every few hours, never merge a red test. Freeze features 3 hours before the demo.
 
-**Cut order if behind (drop top first):** Billing Ops + Discount Advisor agents, Hugging Face fallback, customer-portal polish, invoice email send (keep PDF download), CSV export. Never cut: the section 1b criteria, billing idempotency tests, RBAC tests, discounts, payments, the dashboard numbers, Revenue Insights, Invoice Explainer.
+**Cut order if behind (drop top first):** Billing Ops + Discount Advisor agents, Hugging Face fallback, customer-portal polish, invoice email send (keep PDF download), CSV export. Never cut: billing idempotency tests, RBAC tests, discounts, payments, the dashboard numbers, Revenue Insights, Invoice Explainer.
 
 ---
 
@@ -473,20 +447,18 @@ Give each person the full spec plus one line: "I own only the items listed for P
 - Reports: figures equal independent SQL on seeded data; overdue list equals §2.11 definition.
 - Perf: §9 targets on bulk seed.
 - AI: §11.7.
-- Section 1b: demo build has mocks off and the dashboard changes after a payment recorded elsewhere (live data); UI checked at 375/768/1280 px; every validation rule in 1b #3 has a failing-input test on both server and client; navigation shows the correct menu per role; `git shortlog -sn` shows both members; the app, dashboard and AI still work with the network disabled (Ollama or deterministic fallback); no network requests to third-party hosts in the browser dev tools.
 
 ---
 
 ## 17. Demo script (for the final walkthrough)
 
-Admin creates product (Odoo variant) + plan + tax + 10% discount (min qty 5) → staff builds subscription from template → confirm → activate → run billing → invoice shows discount + tax → record partial then final payment → dashboard updates → set a past due date to show overdue → Collections Agent drafts reminder → staff approves → customer logs into portal and sees only own data → Revenue Insights answers "how much is outstanding?" with numbers matching the dashboard. Then disable the network and show the app, dashboard and AI still work; show a validation error, the phone-width layout, and `git shortlog -sn`.
+Admin creates product (Odoo variant) + plan + tax + 10% discount (min qty 5) → staff builds subscription from template → confirm → activate → run billing → invoice shows discount + tax → record partial then final payment → dashboard updates → set a past due date to show overdue → Collections Agent drafts reminder → staff approves → customer logs into portal and sees only own data → Revenue Insights answers "how much is outstanding?" with numbers matching the dashboard.
 
 ---
 
 ## 18. Verification status of claims in this document
 
 - **Verified (from sources checked while writing):** Groq exposes an OpenAI-compatible endpoint at `https://api.groq.com/openai/v1`; `llama-3.3-70b-versatile` is documented as supporting tool calling; Groq has a free tier with strict rate limits and a frequently changing model catalog.
-- **Also verified (Ollama):** OpenAI-compatible endpoint at `http://localhost:11434/v1` with a dummy API key, and tool calling for supported models such as Llama 3.1, per Ollama's blog and third-party guides; parameter coverage varies by model.
 - **Believed, not checked:** Hugging Face router URL and its free limits/tool-calling support; WeasyPrint/APScheduler/dateutil behaviors as described; exact current versions of all libraries.
 - **Mine, not from the brief:** every row in §2, the stack choice in §3, the MRR normalization, all AI architecture. Challenge any of them with a concrete reason.
 - **Unmeasured:** all performance claims; they must come from the §9 benchmark run.

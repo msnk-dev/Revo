@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+git fetch -q origin main
+exec scripts/check_ownership.sh "$(git config brightloop.role)" origin/main
+

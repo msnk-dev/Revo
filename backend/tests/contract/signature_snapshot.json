@@ -1,0 +1,70 @@
+{
+  "app.deps.Actor": {
+    "fields": ["user_id", "role", "customer_id"]
+  },
+  "app.deps.get_db": {
+    "parameters": [],
+    "return": "Iterator[Session]"
+  },
+  "app.deps.get_current_actor": {
+    "parameters": [["", "credentials", "Depends"]],
+    "return": "Actor"
+  },
+  "app.deps.require_roles": {
+    "parameters": [["VAR_POSITIONAL", "roles", "required"]],
+    "return": "Callable[..., Actor]"
+  },
+  "app.services.reports.get_summary": {
+    "parameters": [["", "db", "required"], ["", "date_from", "required"], ["", "date_to", "required"]],
+    "return": "SummaryOut"
+  },
+  "app.services.reports.get_revenue_by_month": {
+    "parameters": [["", "db", "required"], ["", "date_from", "required"], ["", "date_to", "required"]],
+    "return": "list[MonthRevenueOut]"
+  },
+  "app.services.reports.get_active_subscriptions_breakdown": {
+    "parameters": [["", "db", "required"]],
+    "return": "BreakdownOut"
+  },
+  "app.services.reports.list_overdue": {
+    "parameters": [["", "db", "required"], ["", "limit", "50"]],
+    "return": "list[OverdueInvoiceOut]"
+  },
+  "app.services.reports.get_overdue_summary": {
+    "parameters": [["", "db", "required"]],
+    "return": "OverdueSummaryOut"
+  },
+  "app.services.billing.dry_run_generate": {
+    "parameters": [["", "db", "required"], ["", "as_of", "required"]],
+    "return": "DryRunOut"
+  },
+  "app.services.billing.generate_due_invoices": {
+    "parameters": [["", "db", "required"], ["", "as_of", "required"]],
+    "return": "GenerateResultOut"
+  },
+  "app.services.billing.get_invoice_breakdown": {
+    "parameters": [["", "db", "required"], ["", "actor", "required"], ["", "invoice_id", "required"]],
+    "return": "InvoiceBreakdownOut"
+  },
+  "app.services.customers.get_payment_history": {
+    "parameters": [["", "db", "required"], ["", "customer_id", "required"], ["", "limit", "20"]],
+    "return": "list[PaymentOut]"
+  },
+  "app.services.subscriptions.list_for_customer": {
+    "parameters": [["", "db", "required"], ["", "customer_id", "required"]],
+    "return": "list[SubscriptionOut]"
+  },
+  "app.services.invoices.list_for_customer": {
+    "parameters": [["", "db", "required"], ["", "customer_id", "required"], ["", "status", "None"]],
+    "return": "list[InvoiceOut]"
+  },
+  "app.services.discounts.list_eligible": {
+    "parameters": [["", "db", "required"], ["", "customer_id", "required"], ["", "quantity", "required"], ["", "product_id", "None"]],
+    "return": "list[DiscountOut]"
+  },
+  "app.services.email.send_plain": {
+    "parameters": [["", "to", "required"], ["", "subject", "required"], ["", "body", "required"]],
+    "return": "NoneType"
+  }
+}
+

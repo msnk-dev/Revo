@@ -1,0 +1,10 @@
+*                                        @handle-A
+/frontend/                               @handle-B
+/frontend/src/features/catalog/          @handle-A
+/frontend/src/features/customers/        @handle-A
+/frontend/src/features/reports/          @handle-A
+/frontend/src/features/staff/            @handle-A
+/backend/app/ai/                         @handle-B
+/backend/tests/ai/                       @handle-B
+/docs/ai.md                              @handle-B
+

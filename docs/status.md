@@ -10,10 +10,24 @@ Verification run on 2026-10-31 against the current project tree. Backend and fro
 | Frontend tests | `npm test -- --maxWorkers=1` during the `web` image build, using Node 22.23.4 | **15 passed** across 5 files; 0 failed |
 | Frontend production build | `npm run build` during the `web` image build | **Passed**: `tsc -b` and Vite 8.3.5 production bundle (104 modules) |
 | Compose configuration | `docker compose config --quiet` | **Passed** |
-| API and frontend images | `docker compose build api web` | API image built; web image built after correcting the Vitest CLI flag |
+| API and frontend images | `docker compose up --build -d` | **Passed**: both images built, including the frontend tests and production bundle |
 
 The deprecation warning is from Starlette's `TestClient` importing `httpx` through its deprecated compatibility path. It does not fail the test suite.
 
-## Demo stack checks
+## Clean-clone demo stack
 
-Pending: run `docker compose up --build -d` from a clean clone; verify Alembic migrations, demo seed, `http://localhost:5173/`, API health through nginx, and MailHog. Record observed output here after the clean-stack run.
+The committed tree was cloned into an empty local folder with `git clone --no-local . .fresh-clone-check`. The existing demo already occupied the default host ports, so the isolated clone used alternate ports in its temporary `.env` file; the Compose services and images were otherwise unchanged.
+
+| Check | Command / result |
+|---|---|
+| Start all services and build from clone | `docker compose --project-directory C:/Rithun/Github/Revo/.fresh-clone-check --project-name revo-fresh-clone up --build -d` — **passed**, all four services started |
+| Container health | `docker compose ... ps` — PostgreSQL healthy, API healthy, web running, MailHog running |
+| Database migration | `docker compose ... exec -T api alembic current` — `0004_invoice_line_snapshots (head)` |
+| Demo seed | `docker compose ... exec -T api python -m app.seed.demo` — **passed**, created admin/customer demo accounts and sample data |
+| UI through nginx | `http://localhost:5174/` — HTTP **200**, built asset reference present |
+| API proxy through nginx | `http://localhost:5174/health` — HTTP **200**, `{"status":"ok"}` |
+| API docs | `http://localhost:8001/docs` — HTTP **200** |
+
+The same committed checkout was then started on the default ports with `docker compose up --build -d` — **passed**. `http://localhost:5173/` returned HTTP **200** with a built asset reference, and `http://localhost:5173/health` returned HTTP **200** with `{"status":"ok"}`. API health reported healthy and Alembic remained at head. A pre-existing temporary Vite container initially held port 5173; after stopping that old container and recreating the Compose network (without deleting the PostgreSQL volume), the standard stack started successfully.
+
+No host Node install was used. The normal ports are web `5173`, API `8000`, PostgreSQL `5432`, and MailHog `8025`.

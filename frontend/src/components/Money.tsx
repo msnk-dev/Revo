@@ -5,8 +5,9 @@ export function Money({ amount, currency = "INR", locale = "en-IN", className }:
   if (!match) throw new Error(`Invalid decimal amount: ${amount}`);
   const [, whole = "0", fraction = ""] = match;
   const wholeValue = BigInt(whole);
-  const groupedWhole = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(wholeValue);
-  const currencyParts = new Intl.NumberFormat(locale, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).formatToParts(0);
+  const negative = amount.startsWith("-");
+  const groupedWhole = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(negative ? -wholeValue : wholeValue);
+  const currencyParts = new Intl.NumberFormat(locale, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).formatToParts(negative ? -0 : 0);
   const rendered = currencyParts.map((part) => {
     if (part.type === "integer") return groupedWhole;
     if (part.type === "fraction") return fraction.padEnd(2, "0").slice(0, 2);

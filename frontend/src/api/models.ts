@@ -1,0 +1,76 @@
+import type { Role } from "../app/AuthContext";
+
+export type SessionUser = { id: number; name: string; role: Role; customer_id?: number | null };
+export type Summary = {
+  active_subscriptions: number;
+  paused_subscriptions: number;
+  mrr: string;
+  collected: string;
+  invoiced: string;
+  outstanding: string;
+  overdue_count: number;
+};
+export type RevenuePoint = { month: string; revenue_collected: string; invoiced: string };
+export type Subscription = {
+  id: number;
+  number: string;
+  customer_id: number;
+  customer_name: string;
+  plan_id: number;
+  plan_name: string;
+  billing_period: "daily" | "weekly" | "monthly" | "yearly";
+  status: "draft" | "quotation" | "confirmed" | "active" | "closed";
+  start_date: string;
+  expiry_date: string | null;
+  quotation_expires_on?: string | null;
+  next_invoice_date: string | null;
+  is_paused: boolean;
+  pausable?: boolean;
+  closable?: boolean;
+  renewable?: boolean;
+  monthly_value: string;
+  lines: { description: string; quantity: number; unit_price: string }[];
+  history: { from_status: string | null; to_status: string; changed_at: string; changed_by: string }[];
+};
+export type InvoiceLine = {
+  description: string;
+  quantity: number;
+  unit_price: string;
+  variant_extra: string;
+  discount_name: string | null;
+  discount_amount: string;
+  discount_reason: string | null;
+  tax_name: string | null;
+  tax_rate_pct: string | null;
+  tax_amount: string;
+  line_total: string;
+};
+export type Invoice = {
+  id: number;
+  number: string;
+  subscription_id: number;
+  customer_id: number;
+  customer_name: string;
+  status: "draft" | "confirmed" | "paid" | "cancelled";
+  invoice_date: string;
+  due_date: string;
+  period_start: string;
+  period_end: string;
+  subtotal: string;
+  discount_total: string;
+  tax_total: string;
+  total: string;
+  amount_paid: string;
+  amount_due: string;
+  lines: InvoiceLine[];
+};
+export type Payment = {
+  id: number;
+  invoice_id: number;
+  invoice_number: string;
+  customer_name: string;
+  amount: string;
+  paid_on: string;
+  method: string;
+  note?: string | null;
+};

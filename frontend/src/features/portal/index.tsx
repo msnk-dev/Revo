@@ -11,22 +11,23 @@ import { EmptyState, ErrorState, LoadingState, Screen } from "../../components/S
 import { RoleGuard } from "../../app/RoleGuard";
 
 type PortalSection = "subscriptions" | "invoices" | "payments";
+type Plan = { id: number; name: string; closable: boolean; is_active: boolean };
 
 function PortalPage() {
   const [section, setSection] = useState<PortalSection>("subscriptions"); const [pageNumber, setPageNumber] = useState(1); const pageSize = 20;
   const [closeCandidate, setCloseCandidate] = useState<Subscription | null>(null); const [notice, setNotice] = useState(""); const queryClient = useQueryClient();
   const mockMode = import.meta.env.VITE_USE_MOCKS === "true";
   const result = useQuery({ queryKey: ["portal", section, pageNumber], queryFn: () => apiRequest<Page<Subscription | Invoice | Payment>>(`/portal/${section}?page=${pageNumber}&page_size=${pageSize}`) });
-  const closeRequest = useMutation({ mutationFn: (subscription: Subscription) => apiRequest(`/subscriptions/${subscription.id}/close`, { method: "POST" }), onSuccess: async () => { setCloseCandidate(null); setNotice("Your close request was submitted."); await queryClient.invalidateQueries({ queryKey: ["portal", "subscriptions"] }); } });
+  const plans = useQuery({ queryKey: ["portal", "plans"], queryFn: () => apiRequest<Page<Plan>>("/plans?page=1&page_size=100"), enabled: section === "subscriptions" });
+  const closeRequest = useMutation({ mutationFn: (subscription: Subscription) => apiRequest(`/subscriptions/${subscription.id}/close`, { method: "POST" }), onSuccess: async () => { setCloseCandidate(null); setNotice("The subscription has been closed."); await queryClient.invalidateQueries({ queryKey: ["portal", "subscriptions"] }); } });
   const tabs: { key: PortalSection; label: string }[] = [{ key: "subscriptions", label: "Subscriptions" }, { key: "invoices", label: "Invoices" }, { key: "payments", label: "Payments" }];
   let columns: Column<Subscription | Invoice | Payment>[] = [];
   if (section === "subscriptions") columns = [
     { key: "number", header: "Subscription", render: (row) => <span className="font-semibold">{(row as Subscription).number}</span> },
-    { key: "plan", header: "Plan", render: (row) => (row as Subscription).plan_name },
+    { key: "plan", header: "Plan", render: (row) => `Plan #${(row as Subscription).plan_id}` },
     { key: "status", header: "Status", render: (row) => <div className="flex gap-2"><StatusChip status={(row as Subscription).status} />{(row as Subscription).is_paused && <StatusChip status="paused" />}</div> },
     { key: "next", header: "Next invoice", render: (row) => (row as Subscription).next_invoice_date ?? "—" },
-    { key: "value", header: "Monthly value", render: (row) => <Money amount={(row as Subscription).monthly_value} /> },
-    { key: "action", header: "Action", render: (row) => { const subscription = row as Subscription; return subscription.status === "active" && subscription.closable === true ? <button onClick={() => setCloseCandidate(subscription)} className="text-sm font-semibold text-indigo-700 hover:underline">Request close</button> : "—"; } },
+    { key: "action", header: "Action", render: (row) => { const subscription = row as Subscription; const canClose = plans.data?.items.find((plan) => plan.id === subscription.plan_id)?.closable; return subscription.status === "active" && canClose ? <button onClick={() => setCloseCandidate(subscription)} className="text-sm font-semibold text-indigo-700 hover:underline">Close subscription</button> : "—"; } },
   ];
   if (section === "invoices") columns = [
     { key: "number", header: "Invoice", render: (row) => (row as Invoice).number },
@@ -38,7 +39,7 @@ function PortalPage() {
   ];
   if (section === "payments") columns = [
     { key: "date", header: "Paid on", render: (row) => (row as Payment).paid_on },
-    { key: "invoice", header: "Invoice", render: (row) => (row as Payment).invoice_number },
+    { key: "invoice", header: "Invoice", render: (row) => `Invoice #${(row as Payment).invoice_id}` },
     { key: "method", header: "Method", render: (row) => <span className="capitalize">{(row as Payment).method.replaceAll("_", " ")}</span> },
     { key: "amount", header: "Amount", render: (row) => <Money amount={(row as Payment).amount} /> },
   ];
@@ -49,7 +50,7 @@ function PortalPage() {
     <div className="pt-2">{result.isLoading ? <LoadingState label={`Loading ${section}…`} /> : result.error ? <ErrorState message={`Could not load your ${section}.`} onRetry={() => void result.refetch()} /> : (result.data?.total ?? 0) === 0 ? <EmptyState title={`No ${section} yet`} description="Your account records will appear here when they are available." /> : <DataTable rows={result.data?.items ?? []} columns={columns} rowKey={(row) => row.id} page={pageNumber} pageSize={pageSize} total={result.data?.total ?? 0} onPageChange={setPageNumber} />}</div>
     <p className="text-xs text-slate-400">Portal data is requested through customer-scoped endpoints; the API must enforce ownership.</p>
     {mockMode && <p className="text-xs text-slate-400">Demo data is enabled.</p>}
-    <ConfirmDialog open={Boolean(closeCandidate)} title="Request subscription closure?" confirmLabel="Submit request" onCancel={() => setCloseCandidate(null)} onConfirm={() => closeCandidate && closeRequest.mutate(closeCandidate)}>We’ll submit a request to close {closeCandidate?.number}. The API checks whether the plan allows closure.</ConfirmDialog>
+    <ConfirmDialog open={Boolean(closeCandidate)} title="Close this subscription?" confirmLabel="Close subscription" onCancel={() => setCloseCandidate(null)} onConfirm={() => closeCandidate && closeRequest.mutate(closeCandidate)}>This will close {closeCandidate?.number} and stop future billing. The API checks the plan’s close policy.</ConfirmDialog>
   </Screen>;
 }
 

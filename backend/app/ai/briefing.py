@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.ai.config import settings as ai_settings
 from app.ai.models import AIRun, Brief
 from app.ai.providers import BriefCompletion, generate_brief
 from app.models import Subscription
@@ -94,6 +95,19 @@ def _narrative_numbers_are_grounded(narrative: str, payload: dict) -> bool:
     return True
 
 
+def _provider_budget_available(db: Session, payload: dict) -> bool:
+    budget = ai_settings.llm_daily_token_budget
+    if budget <= 0:
+        return False
+    start = datetime.combine(_today_utc(), time.min, tzinfo=timezone.utc)
+    used = db.scalar(
+        select(func.coalesce(func.sum(func.coalesce(AIRun.tokens_in, 0) + func.coalesce(AIRun.tokens_out, 0)), 0))
+        .where(AIRun.provider.is_not(None), AIRun.created_at >= start)
+    ) or 0
+    estimated = max(1, (len(json.dumps(payload, sort_keys=True, separators=(",", ":"))) + 3) // 4)
+    return int(used) + estimated <= budget
+
+
 def _fallback_narrative(payload: dict) -> str:
     current = payload["current"]
     overdue = payload["overdue"]
@@ -116,6 +130,7 @@ def _make_run(
     used_fallback: bool,
     latency_ms: int,
 ) -> AIRun:
+    encoded_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return AIRun(
         agent="cfo_brief",
         user_id=None,
@@ -131,8 +146,8 @@ def _make_run(
         model=provider_result.model if provider_result else None,
         provider=provider_result.provider if provider_result else None,
         latency_ms=latency_ms,
-        tokens_in=None,
-        tokens_out=None,
+        tokens_in=max(1, (len(encoded_payload) + 3) // 4) if provider_result else None,
+        tokens_out=max(1, (len(narrative) + 3) // 4) if provider_result else None,
         status="fallback" if used_fallback else "success",
     )
 
@@ -196,7 +211,7 @@ def run_daily_brief(db: Session) -> None:
     started = perf_counter()
     try:
         payload = _build_payload(db, report_date)
-        provider_result = generate_brief(payload)
+        provider_result = generate_brief(payload) if _provider_budget_available(db, payload) else None
         if provider_result and _narrative_numbers_are_grounded(provider_result.narrative, payload):
             narrative = provider_result.narrative
             used_fallback = False

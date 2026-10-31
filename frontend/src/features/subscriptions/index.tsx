@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type { Page } from "../../api/types";
-import type { Subscription } from "../../api/models";
 import { DataTable, type Column } from "../../components/DataTable";
 import { Money } from "../../components/Money";
 import { StatusChip } from "../../components/StatusChip";
@@ -11,14 +10,42 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { EmptyState, ErrorState, LoadingState, Screen, primaryButton, secondaryButton } from "../../components/Screen";
 import { RoleGuard } from "../../app/RoleGuard";
 
+type Customer = { id: number; name: string; email: string; is_active: boolean };
+type Plan = { id: number; name: string; price: string; billing_period: "daily" | "weekly" | "monthly" | "yearly"; min_quantity: number; pausable: boolean; closable: boolean; renewable: boolean; is_active: boolean };
+type Product = { id: number; name: string; sales_price: string; default_tax_id: number | null; is_active: boolean };
+type Template = { id: number; name: string; plan_id: number; validity_days: number; lines: { product_id: number; quantity: number; variant_value_ids: number[] }[] };
+type SubscriptionRecord = { id: number; number: string; customer_id: number; plan_id: number; status: "draft" | "quotation" | "confirmed" | "active" | "closed"; start_date: string; expiry_date: string | null; next_invoice_date: string | null; payment_terms_days: number; quotation_expires_on: string | null; is_paused: boolean; lines: { id: number; product_id: number; description: string; quantity: number; unit_price: string; tax_id: number | null; variant_value_ids: number[] }[]; history: { id: number; from_status: string | null; to_status: string; changed_at: string; changed_by: number | null }[] };
+type DisplaySubscription = SubscriptionRecord & { customer_name: string; plan_name: string; billing_period: Plan["billing_period"]; monthly_value: string; pausable: boolean; closable: boolean; renewable: boolean };
 const pageSize = 10;
 
+function decimalCents(value: string): bigint { const [whole, fraction = ""] = value.split("."); return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2)); }
+function centsDecimal(value: bigint): string { const absolute = value < 0n ? -value : value; return `${value < 0n ? "-" : ""}${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`; }
+function monthlyValue(subscription: SubscriptionRecord, period: Plan["billing_period"]): string {
+  const cents = subscription.lines.reduce((sum, line) => sum + decimalCents(line.unit_price) * BigInt(line.quantity), 0n);
+  if (period === "daily") return centsDecimal(cents * 30n);
+  if (period === "weekly") return centsDecimal(cents * 52n / 12n);
+  if (period === "yearly") return centsDecimal(cents / 12n);
+  return centsDecimal(cents);
+}
+function today() { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
+function nextTransition(subscription: SubscriptionRecord): SubscriptionRecord["status"] | null {
+  if (subscription.status === "draft") return "quotation";
+  if (subscription.status === "quotation") return subscription.quotation_expires_on && subscription.quotation_expires_on < today() ? null : "confirmed";
+  if (subscription.status === "confirmed") return subscription.start_date <= today() ? "active" : null;
+  return null;
+}
+
 function SubscriptionList() {
-  const [page, setPage] = useState(1); const [status, setStatus] = useState(""); const [search, setSearch] = useState("");
-  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-  if (status) query.set("status", status); if (search.trim()) query.set("q", search.trim());
-  const result = useQuery({ queryKey: ["subscriptions", page, status, search], queryFn: () => apiRequest<Page<Subscription>>(`/subscriptions?${query}`) });
-  const columns = useMemo<Column<Subscription>[]>(() => [
+  const [page, setPage] = useState(1); const [status, setStatus] = useState("");
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) }); if (status) params.set("status", status);
+  const result = useQuery({ queryKey: ["subscriptions", page, status], queryFn: () => apiRequest<Page<SubscriptionRecord>>(`/subscriptions?${params}`), refetchInterval: 15_000 });
+  const customers = useQuery({ queryKey: ["customers", "lookup"], queryFn: () => apiRequest<Page<Customer>>("/customers?page=1&page_size=100") });
+  const plans = useQuery({ queryKey: ["catalog", "plans"], queryFn: () => apiRequest<Page<Plan>>("/plans?page=1&page_size=100") });
+  const rows = useMemo(() => (result.data?.items ?? []).map((subscription): DisplaySubscription => {
+    const plan = plans.data?.items.find((item) => item.id === subscription.plan_id);
+    return { ...subscription, customer_name: customers.data?.items.find((item) => item.id === subscription.customer_id)?.name ?? `Customer #${subscription.customer_id}`, plan_name: plan?.name ?? `Plan #${subscription.plan_id}`, billing_period: plan?.billing_period ?? "monthly", monthly_value: monthlyValue(subscription, plan?.billing_period ?? "monthly"), pausable: plan?.pausable ?? false, closable: plan?.closable ?? false, renewable: plan?.renewable ?? false };
+  }), [result.data, customers.data, plans.data]);
+  const columns = useMemo<Column<DisplaySubscription>[]>(() => [
     { key: "number", header: "Subscription", render: (row) => <Link className="font-semibold text-indigo-700" to={`/subscriptions/${row.id}`}>{row.number}</Link> },
     { key: "customer", header: "Customer", render: (row) => row.customer_name },
     { key: "plan", header: "Plan", render: (row) => <><span className="block font-medium text-slate-800">{row.plan_name}</span><span className="text-xs capitalize text-slate-500">{row.billing_period}</span></> },
@@ -26,49 +53,62 @@ function SubscriptionList() {
     { key: "next", header: "Next invoice", render: (row) => row.next_invoice_date ? new Date(`${row.next_invoice_date}T00:00:00`).toLocaleDateString("en-IN") : "—" },
     { key: "mrr", header: "Monthly value", render: (row) => <Money amount={row.monthly_value} /> },
   ], []);
-  return <Screen eyebrow="Billing" title="Subscriptions" description="Track subscription status, billing dates, and customer value.">
-    <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4">
-      <input aria-label="Search subscriptions" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search number or customer" className="min-w-64 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-      <select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All statuses</option>{["draft", "quotation", "confirmed", "active", "closed"].map((item) => <option key={item}>{item}</option>)}</select>
-      <button onClick={() => { setSearch(""); setStatus(""); setPage(1); }} className={secondaryButton}>Clear filters</button>
-    </div>
-    {result.isLoading ? <LoadingState label="Loading subscriptions…" /> : result.error ? <ErrorState message="Could not load subscriptions. Check the API or enable demo mode." onRetry={() => void result.refetch()} /> : (result.data?.total ?? 0) === 0 ? <EmptyState title="No subscriptions found" description="Try adjusting the filters or create a subscription when the subscription workflow is available." /> : <DataTable rows={result.data?.items ?? []} columns={columns} rowKey={(row) => row.id} page={page} pageSize={pageSize} total={result.data?.total ?? 0} onPageChange={setPage} />}
+  return <Screen eyebrow="Billing" title="Subscriptions" description="Track subscription status, billing dates, and customer value." actions={<Link to="/subscriptions/new" className={primaryButton}>Create subscription</Link>}>
+    <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4"><select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm"><option value="">All statuses</option>{["draft", "quotation", "confirmed", "active", "closed"].map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setStatus(""); setPage(1); }} className={secondaryButton}>Clear filter</button></div>
+    {result.isLoading || customers.isLoading || plans.isLoading ? <LoadingState label="Loading subscriptions…" /> : result.error || customers.error || plans.error ? <ErrorState message="Could not load subscriptions or their customer and plan details." onRetry={() => { void result.refetch(); void customers.refetch(); void plans.refetch(); }} /> : result.data?.total === 0 ? <EmptyState title="No subscriptions found" description="Create a subscription for an existing customer and plan." action={<Link to="/subscriptions/new" className={primaryButton}>Create subscription</Link>} /> : <DataTable rows={rows} columns={columns} rowKey={(row) => row.id} page={page} pageSize={pageSize} total={result.data?.total ?? 0} onPageChange={setPage} />}
   </Screen>;
 }
 
-function today() { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
-function nextTransition(subscription: Subscription): Subscription["status"] | null {
-  if (subscription.status === "draft") return subscription.lines.length ? "quotation" : null;
-  if (subscription.status === "quotation") return subscription.quotation_expires_on && subscription.quotation_expires_on < today() ? null : "confirmed";
-  if (subscription.status === "confirmed") return subscription.start_date <= today() ? "active" : null;
-  if (subscription.status === "active") return "closed";
-  return null;
+function NewSubscription() {
+  const navigate = useNavigate(); const queryClient = useQueryClient(); const [customerId, setCustomerId] = useState(""); const [planId, setPlanId] = useState(""); const [productId, setProductId] = useState(""); const [templateId, setTemplateId] = useState(""); const [quantity, setQuantity] = useState("1"); const [startDate, setStartDate] = useState(today()); const [expiryDate, setExpiryDate] = useState(""); const [terms, setTerms] = useState("14"); const [error, setError] = useState("");
+  const customers = useQuery({ queryKey: ["customers", "lookup"], queryFn: () => apiRequest<Page<Customer>>("/customers?page=1&page_size=100") });
+  const plans = useQuery({ queryKey: ["catalog", "plans"], queryFn: () => apiRequest<Page<Plan>>("/plans?page=1&page_size=100") });
+  const products = useQuery({ queryKey: ["catalog", "products"], queryFn: () => apiRequest<Page<Product>>("/products?page=1&page_size=100") });
+  const templates = useQuery({ queryKey: ["catalog", "templates"], queryFn: () => apiRequest<Page<Template>>("/quotation-templates?page=1&page_size=100") });
+  const create = useMutation({ mutationFn: async () => {
+    if (templateId) return apiRequest<SubscriptionRecord>(`/subscriptions/from-template/${templateId}`, { method: "POST", body: JSON.stringify({ customer_id: Number(customerId), start_date: startDate }) });
+    return apiRequest<SubscriptionRecord>("/subscriptions", { method: "POST", body: JSON.stringify({ customer_id: Number(customerId), plan_id: Number(planId), start_date: startDate, expiry_date: expiryDate || null, payment_terms_days: Number(terms), lines: [{ product_id: Number(productId), quantity: Number(quantity), variant_value_ids: [] }] }) });
+  }, onSuccess: async (subscription) => { await queryClient.invalidateQueries({ queryKey: ["subscriptions"] }); navigate(`/subscriptions/${subscription.id}`); }, onError: (reason) => setError(reason instanceof Error ? reason.message : "Could not create subscription.") });
+  const pending = customers.isLoading || plans.isLoading || products.isLoading || templates.isLoading;
+  if (pending) return <LoadingState label="Loading customers, plans, and products…" />;
+  if (customers.error || plans.error || products.error || templates.error) return <ErrorState message="Subscription setup data could not be loaded." onRetry={() => { void customers.refetch(); void plans.refetch(); void products.refetch(); void templates.refetch(); }} />;
+  const availableCustomers = customers.data?.items.filter((item) => item.is_active) ?? [];
+  const availablePlans = plans.data?.items.filter((item) => item.is_active) ?? [];
+  const availableProducts = products.data?.items.filter((item) => item.is_active) ?? [];
+  return <Screen eyebrow="Billing" title="Create subscription" description="Start a draft subscription from a plan and product, or use a quotation template." actions={<Link to="/subscriptions" className={secondaryButton}>Back to subscriptions</Link>}>
+    <form className="space-y-5 rounded-xl border border-slate-200 bg-white p-5" onSubmit={(event) => { event.preventDefault(); setError(""); create.mutate(); }}>
+      <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium text-slate-700">Customer<select required value={customerId} onChange={(e) => setCustomerId(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5">{availableCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · {customer.email}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Start date<input required type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5" /></label><label className="text-sm font-medium text-slate-700">Quotation template (optional)<select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5"><option value="">Build from plan and product</option>{templates.data?.items.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>
+      {!templateId && <><label className="text-sm font-medium text-slate-700">Plan<select required value={planId} onChange={(e) => setPlanId(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5">{availablePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {plan.price} / {plan.billing_period}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Product<select required value={productId} onChange={(e) => setProductId(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5">{availableProducts.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sales_price}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Quantity<input required type="number" min="1" max="100000" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5" /></label><label className="text-sm font-medium text-slate-700">Expiry date (optional)<input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5" /></label><label className="text-sm font-medium text-slate-700">Payment terms (days)<input type="number" min="0" max="365" value={terms} onChange={(e) => setTerms(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5" /></label></>}
+      </div>
+      {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}<button disabled={create.isPending || !customerId || (!templateId && (!planId || !productId))} className={primaryButton}>{create.isPending ? "Creating…" : templateId ? "Create quotation from template" : "Create draft subscription"}</button>
+    </form>
+  </Screen>;
 }
 
 function SubscriptionDetail() {
   const { id = "" } = useParams(); const queryClient = useQueryClient(); const [confirmClose, setConfirmClose] = useState(false); const [notice, setNotice] = useState("");
-  const key = ["subscription", id];
-  const query = useQuery({ queryKey: key, queryFn: () => apiRequest<Subscription>(`/subscriptions/${id}`), enabled: Boolean(id) });
-  const refresh = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ["subscription", id] }), queryClient.invalidateQueries({ queryKey: ["subscriptions"] })]); };
-  const mutate = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => apiRequest<Subscription>(path, { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) }), onSuccess: async () => { setNotice("Subscription updated."); await refresh(); } });
+  const key = ["subscription", id]; const query = useQuery({ queryKey: key, queryFn: () => apiRequest<SubscriptionRecord>(`/subscriptions/${id}`), enabled: Boolean(id) });
+  const customers = useQuery({ queryKey: ["customer", query.data?.customer_id], queryFn: () => apiRequest<Customer>(`/customers/${query.data?.customer_id}`), enabled: Boolean(query.data?.customer_id) });
+  const plan = useQuery({ queryKey: ["plan", query.data?.plan_id], queryFn: () => apiRequest<Plan>(`/plans/${query.data?.plan_id}`), enabled: Boolean(query.data?.plan_id) });
+  const refresh = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: key }), queryClient.invalidateQueries({ queryKey: ["subscriptions"] }), queryClient.invalidateQueries({ queryKey: ["reports"] })]); };
+  const mutate = useMutation({ mutationFn: async ({ path, body }: { path: string; body?: unknown }) => {
+    const init = { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) };
+    if (path.endsWith("/renew")) {
+      const result = await apiRequest<{ subscription: SubscriptionRecord }>(path, init);
+      return result.subscription;
+    }
+    return apiRequest<SubscriptionRecord>(path, init);
+  }, onSuccess: async (_data, vars) => { setNotice(vars.path.endsWith("/close") ? "Subscription closed." : vars.path.endsWith("/renew") ? "Renewal draft created." : "Subscription updated."); await refresh(); } });
   if (query.isLoading) return <LoadingState label="Loading subscription…" />;
   if (query.error || !query.data) return <ErrorState message="Subscription could not be loaded." onRetry={() => void query.refetch()} />;
-  const subscription = query.data; const transition = nextTransition(subscription);
-  const activate = (to: Subscription["status"]) => mutate.mutate({ path: `/subscriptions/${subscription.id}/transition`, body: { to } });
-  return <Screen eyebrow="Subscription detail" title={subscription.number} description={`${subscription.customer_name} · ${subscription.plan_name}`} actions={<Link to="/subscriptions" className={secondaryButton}>Back to list</Link>}>
-    {notice && <p role="status" className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{notice}</p>}
-    {mutate.error && <ErrorState message={mutate.error instanceof Error ? mutate.error.message : "Action failed"} />}
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Status</p><div className="mt-2 flex gap-2"><StatusChip status={subscription.status} />{subscription.is_paused && <StatusChip status="paused" />}</div></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Plan</p><p className="mt-2 font-semibold">{subscription.plan_name}</p><p className="text-sm capitalize text-slate-500">{subscription.billing_period}</p></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Next invoice</p><p className="mt-2 font-semibold">{subscription.next_invoice_date ?? "—"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Monthly value</p><p className="mt-2 text-xl font-semibold"><Money amount={subscription.monthly_value} /></p></article></div>
-    <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Subscription lines</h2><div className="mt-4 divide-y divide-slate-100">{subscription.lines.map((line, index) => <div key={`${line.description}-${index}`} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-medium">{line.description}</p><p className="text-sm text-slate-500">Quantity {line.quantity}</p></div><Money amount={line.unit_price} /></div>)}</div></section>
-    <div className="grid gap-6 lg:grid-cols-2">
-      <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Status timeline</h2><ol className="mt-5 space-y-4">{subscription.history.map((item, index) => <li key={`${item.changed_at}-${index}`} className="relative flex gap-3"><span className="mt-1.5 h-2.5 w-2.5 rounded-full bg-indigo-500" /><div><p className="text-sm font-medium capitalize">{item.from_status ? `${item.from_status} → ` : "Created as "}{item.to_status}</p><p className="mt-1 text-xs text-slate-500">{new Date(item.changed_at).toLocaleString("en-IN")} · {item.changed_by}</p></div></li>)}</ol></section>
-      <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Available actions</h2><p className="mt-1 text-sm text-slate-500">Actions are checked again by the API when connected.</p><div className="mt-4 flex flex-wrap gap-2">
-        {transition && transition !== "closed" && <button disabled={mutate.isPending} onClick={() => activate(transition)} className={primaryButton}>{transition === "active" ? "Activate subscription" : `Move to ${transition}`}</button>}
-        {subscription.status === "active" && subscription.pausable === true && <button disabled={mutate.isPending} onClick={() => mutate.mutate({ path: `/subscriptions/${subscription.id}/${subscription.is_paused ? "resume" : "pause"}` })} className={secondaryButton}>{subscription.is_paused ? "Resume billing" : "Pause billing"}</button>}
-        {subscription.status === "active" && subscription.closable === true && <button disabled={mutate.isPending} onClick={() => setConfirmClose(true)} className="rounded-lg border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50">Close subscription</button>}
-        {subscription.status === "active" && subscription.renewable === true && <button disabled={mutate.isPending} onClick={() => mutate.mutate({ path: `/subscriptions/${subscription.id}/renew` })} className={secondaryButton}>Renew</button>}
-        {!transition && subscription.status !== "active" && <span className="text-sm text-slate-500">No lifecycle action is available today.</span>}
-      </div></section>
+  const subscription = query.data; const transition = nextTransition(subscription); const recurring = monthlyValue(subscription, plan.data?.billing_period ?? "monthly");
+  const activate = (to: SubscriptionRecord["status"]) => mutate.mutate({ path: `/subscriptions/${subscription.id}/transition`, body: { to } });
+  return <Screen eyebrow="Subscription detail" title={subscription.number} description={`${customers.data?.name ?? `Customer #${subscription.customer_id}`} · ${plan.data?.name ?? `Plan #${subscription.plan_id}`}`} actions={<Link to="/subscriptions" className={secondaryButton}>Back to list</Link>}>
+    {notice && <p role="status" className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{notice}</p>}{(mutate.error || customers.error || plan.error) && <ErrorState message={mutate.error instanceof Error ? mutate.error.message : "Related account details could not be loaded." />}
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Status</p><div className="mt-2 flex gap-2"><StatusChip status={subscription.status} />{subscription.is_paused && <StatusChip status="paused" />}</div></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Plan</p><p className="mt-2 font-semibold">{plan.data?.name ?? `Plan #${subscription.plan_id}`}</p><p className="text-sm capitalize text-slate-500">{plan.data?.billing_period ?? "recurring"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Next invoice</p><p className="mt-2 font-semibold">{subscription.next_invoice_date ?? "—"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-5"><p className="text-sm text-slate-500">Monthly value</p><p className="mt-2 text-xl font-semibold"><Money amount={recurring} /></p></article></div>
+    <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Subscription lines</h2><div className="mt-4 divide-y divide-slate-100">{subscription.lines.map((line) => <div key={line.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-medium">{line.description}</p><p className="text-sm text-slate-500">Quantity {line.quantity}</p></div><Money amount={line.unit_price} /></div>)}</div></section>
+    <div className="grid gap-6 lg:grid-cols-2"><section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Status timeline</h2><ol className="mt-5 space-y-4">{subscription.history.map((item) => <li key={item.id} className="relative flex gap-3"><span className="mt-1.5 h-2.5 w-2.5 rounded-full bg-indigo-500" /><div><p className="text-sm font-medium capitalize">{item.from_status ? `${item.from_status} → ` : "Created as "}{item.to_status}</p><p className="mt-1 text-xs text-slate-500">{new Date(item.changed_at).toLocaleString("en-IN")} · {item.changed_by ?? "System"}</p></div></li>)}</ol></section>
+      <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Available actions</h2><p className="mt-1 text-sm text-slate-500">The API verifies lifecycle rules again for every action.</p><div className="mt-4 flex flex-wrap gap-2">{transition && <button disabled={mutate.isPending} onClick={() => activate(transition)} className={primaryButton}>{transition === "active" ? "Activate subscription" : `Move to ${transition}`}</button>}{subscription.status === "active" && plan.data?.pausable && <button disabled={mutate.isPending} onClick={() => mutate.mutate({ path: `/subscriptions/${subscription.id}/${subscription.is_paused ? "resume" : "pause"}` })} className={secondaryButton}>{subscription.is_paused ? "Resume billing" : "Pause billing"}</button>}{subscription.status === "active" && plan.data?.closable && <button disabled={mutate.isPending} onClick={() => setConfirmClose(true)} className="rounded-lg border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50">Close subscription</button>}{subscription.status === "active" && plan.data?.renewable && <button disabled={mutate.isPending} onClick={() => mutate.mutate({ path: `/subscriptions/${subscription.id}/renew` })} className={secondaryButton}>Renew</button>}{!transition && subscription.status !== "active" && <span className="text-sm text-slate-500">No lifecycle action is available today.</span>}</div></section>
     </div>
     <ConfirmDialog open={confirmClose} title="Close this subscription?" confirmLabel="Close subscription" onCancel={() => setConfirmClose(false)} onConfirm={() => { setConfirmClose(false); mutate.mutate({ path: `/subscriptions/${subscription.id}/close` }); }}>Closing is terminal and stops future billing. This action cannot be undone.</ConfirmDialog>
   </Screen>;
@@ -76,5 +116,6 @@ function SubscriptionDetail() {
 
 export const routes = [
   { path: "subscriptions", element: <RoleGuard roles={["admin", "staff"]}><SubscriptionList /></RoleGuard> },
+  { path: "subscriptions/new", element: <RoleGuard roles={["admin", "staff"]}><NewSubscription /></RoleGuard> },
   { path: "subscriptions/:id", element: <RoleGuard roles={["admin", "staff"]}><SubscriptionDetail /></RoleGuard> },
 ];

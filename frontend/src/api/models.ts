@@ -1,6 +1,6 @@
 import type { Role } from "../app/AuthContext";
 
-export type SessionUser = { id: number; name: string; role: Role; customer_id?: number | null };
+export type SessionUser = { id: number; name: string; email: string; role: Role; customer_id: number | null };
 export type Summary = {
   active_subscriptions: number;
   paused_subscriptions: number;
@@ -29,8 +29,8 @@ export type Subscription = {
   closable?: boolean;
   renewable?: boolean;
   monthly_value: string;
-  lines: { description: string; quantity: number; unit_price: string }[];
-  history: { from_status: string | null; to_status: string; changed_at: string; changed_by: string }[];
+  lines: { id?: number; product_id?: number; description: string; quantity: number; unit_price: string; tax_id?: number | null; variant_value_ids?: number[] }[];
+  history: { id?: number; from_status: string | null; to_status: string; changed_at: string; changed_by: string | number | null }[];
 };
 export type InvoiceLine = {
   description: string;

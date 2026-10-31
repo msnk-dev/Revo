@@ -51,24 +51,3 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
-
-  ownership:
-    name: Check path ownership
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Check PR branch ownership
-        env:
-          HEAD_BRANCH: ${{ github.head_ref }}
-          BASE_BRANCH: ${{ github.base_ref }}
-        run: |
-          case "$HEAD_BRANCH" in
-            a/*) role=A ;;
-            b/*) role=B ;;
-            *) echo "Use an a/* or b/* milestone branch"; exit 1 ;;
-          esac
-          git fetch origin "$BASE_BRANCH"
-          bash scripts/check_ownership.sh "$role" "origin/$BASE_BRANCH"

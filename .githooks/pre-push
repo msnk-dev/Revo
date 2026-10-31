@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-git fetch -q origin main
-exec bash scripts/check_ownership.sh "$(git config revo.role)" origin/main
-

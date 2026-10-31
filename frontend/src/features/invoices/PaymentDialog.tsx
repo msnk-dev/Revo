@@ -1,13 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { FormField } from "../../components/FormField";
 
-export type PaymentDraft = { amount: string; paid_on: string; method: string; note: string };
+export type PaymentDraft = { amount: string; paid_on: string; method_id: number; note: string };
+type PaymentMethod = { id: number; name: string };
 
-export function PaymentDialog({ open, amountDue, onCancel, onSubmit, busy }: { open: boolean; amountDue: string; onCancel: () => void; onSubmit: (payment: PaymentDraft) => Promise<void>; busy?: boolean }) {
+export function PaymentDialog({ open, amountDue, methods, onCancel, onSubmit, busy }: { open: boolean; amountDue: string; methods: PaymentMethod[]; onCancel: () => void; onSubmit: (payment: PaymentDraft) => Promise<void>; busy?: boolean }) {
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); const form = new FormData(event.currentTarget);
-    try { await onSubmit({ amount: String(form.get("amount")), paid_on: String(form.get("paid_on")), method: String(form.get("method")), note: String(form.get("note") ?? "") }); onCancel(); }
+    try { await onSubmit({ amount: String(form.get("amount")), paid_on: String(form.get("paid_on")), method_id: Number(form.get("method_id")), note: String(form.get("note") ?? "") }); onCancel(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Payment could not be recorded"); }
   }
   if (!open) return null;
@@ -17,10 +18,10 @@ export function PaymentDialog({ open, amountDue, onCancel, onSubmit, busy }: { o
       <form onSubmit={submit} className="mt-5 space-y-4">
         <FormField label="Amount" name="amount" type="text" inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" placeholder="0.00" required />
         <FormField label="Payment date" name="paid_on" type="date" defaultValue={new Date().toISOString().slice(0, 10)} required />
-        <label className="block text-sm font-medium text-slate-700">Payment method<select name="method" className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5 font-normal" defaultValue="bank_transfer">{["cash", "bank_transfer", "card", "upi", "cheque"].map((method) => <option key={method} value={method}>{method.replaceAll("_", " ")}</option>)}</select></label>
+        <label className="block text-sm font-medium text-slate-700">Payment method<select required name="method_id" className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2.5 font-normal">{methods.map((method) => <option key={method.id} value={method.id}>{method.name.replaceAll("_", " ")}</option>)}</select></label>
         <FormField label="Note" name="note" maxLength={500} placeholder="Optional reference" />
         {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
-        <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="rounded-lg px-4 py-2.5 text-sm text-slate-600">Cancel</button><button type="submit" disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Recording…" : "Record payment"}</button></div>
+        <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="rounded-lg px-4 py-2.5 text-sm text-slate-600">Cancel</button><button type="submit" disabled={busy || methods.length === 0} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Recording…" : "Record payment"}</button></div>
       </form>
     </section>
   </div>;

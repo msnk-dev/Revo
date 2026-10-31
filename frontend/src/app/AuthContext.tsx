@@ -12,6 +12,12 @@ type AuthValue = {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
+type AuthResponse = { user_id?: number; id?: number; email?: string; name?: string; role: Role; customer_id: number | null };
+
+function normalizeIdentity(identity: AuthResponse): SessionUser {
+  const email = identity.email ?? identity.name ?? "user@revo.local";
+  return { id: identity.user_id ?? identity.id ?? 0, name: identity.name ?? email, email, role: identity.role, customer_id: identity.customer_id };
+}
 
 const AuthContext = createContext<AuthValue | null>(null);
 
@@ -22,18 +28,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    apiRequest<SessionUser | null>("/auth/me")
-      .then((currentUser) => { if (active) setUser(currentUser); })
+    apiRequest<AuthResponse | null>("/auth/me")
+      .then((currentUser) => { if (active) setUser(currentUser ? normalizeIdentity(currentUser) : null); })
       .catch(() => { if (active) setUser(null); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const nextUser = await apiRequest<SessionUser>("/auth/login", {
+    const identity = await apiRequest<AuthResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+    const nextUser = normalizeIdentity(identity);
     queryClient.clear();
     setUser(nextUser);
   }, [queryClient]);

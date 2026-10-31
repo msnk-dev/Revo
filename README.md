@@ -15,6 +15,10 @@ For backend tests outside Docker, run `cd backend && uv --cache-dir .uv-cache sy
 
 Useful commands: `make down`, `make logs`, `make migrate`, and `make test`.
 
+## GitHub workflow
+
+Pull requests to `main` run the backend test suite, frontend production build, and path ownership check. Use `a/` or `b/` branch prefixes so the ownership check can apply the right role. To enable the local pre-push hook, run `git config core.hooksPath .githooks` and set your role with `git config revo.role A` or `git config revo.role B`.
+
 For the performance fixture, run `make seed-bulk` after demo seeding. The demo seed generates local-only credentials and prints them on first creation; save the admin password as `REVO_ADMIN_PASSWORD`, then run `python backend/scripts/perf_smoke.py` against the running API. It reports p95 timings and fails endpoints over two seconds. The API container enables APScheduler for subscription activation, expiry, invoice generation, reminder counts, and the optional daily AI brief. The scheduler is off by default when running the API directly outside Compose.
 
 ## Demo credentials

@@ -1,10 +1,10 @@
-*                                        @handle-A
-/frontend/                               @handle-B
-/frontend/src/features/catalog/          @handle-A
-/frontend/src/features/customers/        @handle-A
-/frontend/src/features/reports/          @handle-A
-/frontend/src/features/staff/            @handle-A
-/backend/app/ai/                         @handle-B
-/backend/tests/ai/                       @handle-B
-/docs/ai.md                              @handle-B
+*                                        @rithunkp
+/frontend/                               @msnk-dev
+/frontend/src/features/catalog/          @rithunkp
+/frontend/src/features/customers/        @rithunkp
+/frontend/src/features/reports/          @rithunkp
+/frontend/src/features/staff/            @rithunkp
+/backend/app/ai/                         @msnk-dev
+/backend/tests/ai/                       @msnk-dev
+/docs/ai.md                              @msnk-dev
 

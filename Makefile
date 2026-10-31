@@ -8,7 +8,7 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f api postgres mailhog
+	docker compose logs -f web api postgres mailhog
 
 seed:
 	docker compose exec api python -m app.seed.demo

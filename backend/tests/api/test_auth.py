@@ -52,6 +52,16 @@ def test_signup_rejects_each_password_rule(client, password):
     assert response.json()["error"]["details"]["password"]
 
 
+@pytest.mark.parametrize("password", ["admin123", "Abcdef1!", "lowercase1!", "UPPERCASE1!", "NoSpecial123"])
+def test_reset_rejects_passwords_that_break_the_password_rule(client, password):
+    response = client.post(
+        "/api/v1/auth/reset",
+        json={"token": "a" * 32, "new_password": password},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["new_password"]
+
+
 def test_signup_rejects_unknown_fields(client):
     response = client.post(
         "/api/v1/auth/signup",

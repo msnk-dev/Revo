@@ -6,15 +6,22 @@ Verification run on 2026-10-31 against the current project tree. Backend and fro
 
 | Check | Command / execution | Result |
 |---|---|---|
-| Backend tests | `docker compose run --rm --no-deps -v "C:/Rithun/Github/Revo/backend:/workspace" -w /workspace -e UV_PROJECT_ENVIRONMENT=/tmp/revo-feature-test-venv --entrypoint sh api -c "uv sync --frozen && uv run --frozen pytest -q"` | **183 passed**, 0 failed, 1 deprecation warning, 25.03 s |
-| Frontend tests | `npm test -- --maxWorkers=1` during the `web` image build, using Node 22.23.4 | **18 passed** across 6 files; 0 failed |
+| Backend tests | `docker compose run --rm --no-deps -v "C:/Rithun/Github/Revo/backend:/workspace" -w /workspace -e UV_PROJECT_ENVIRONMENT=/tmp/revo-merge-test-venv --entrypoint sh api -c "uv run --frozen pytest -q"` | **251 passed**, 0 failed, 1 deprecation warning, 30.81 s |
+| Frontend tests | `docker compose build web` using Node 22.23.4 | **21 passed** across 7 files; 0 failed |
 | Frontend production build | `npm run build` during the `web` image build | **Passed**: `tsc -b` and Vite 8.3.5 production bundle (104 modules) |
 | Compose configuration | `docker compose config --quiet` | **Passed** |
+| Frontend production build | `docker compose build web` | **Passed**: `tsc -b` and Vite 8.3.5 production bundle (104 modules) |
 | API and frontend images | `docker compose up --build -d` | **Passed**: both images built, including the frontend tests and production bundle |
 
 The deprecation warning is from Starlette's `TestClient` importing `httpx` through its deprecated compatibility path. It does not fail the test suite.
 
-The latest backend/frontend runs include CSV date filtering and the `=1+1` spreadsheet-injection regression, renewal window and role checks, API field-error parsing, the Odoo +560 variant and 10% minimum-quantity discount UI flow, and a staff-to-admin-only-catalog guard test.
+The backend run also covers the AI specialists and deterministic router (20 labeled prompts), typed tool-argument validation, Groq 429 failover, cross-customer prompt isolation, confirmation-gated writes, no-key operation, and number grounding. It includes CSV date filtering and the `=1+1` spreadsheet-injection regression, renewal-window and role checks, and security headers. The existing frontend run covers API field-error parsing, the Odoo +560 variant and 10% minimum-quantity discount UI flow, and a staff-to-admin-only-catalog guard test.
+
+The local demo credentials were reset with `APP_ENV=demo` and the explicit `--use-legacy-demo-passwords` seed option: `admin@example.com / admin123` and `customer@example.com / user123`. The option is rejected outside demo mode; signup and password reset continue enforcing the strong-password rule.
+
+The API and web Compose services were rebuilt after the AI orchestration changes and the API reported healthy. The Ollama tools probe was attempted, but no local Ollama service/model was available at `http://localhost:11434`; tool calling is therefore not verified on this machine. Run `backend/scripts/check_ollama_tools.py` after starting a compatible model before relying on Ollama.
+
+The bulk-fixture performance smoke ran after the fixture-count guard confirmed 1,000 customers, 2,000 subscriptions, 20,000 invoices, and 16,000 payments. It measured every list endpoint, dashboard summary, report, and the new AI-run list endpoint; results are recorded in [perf.md](perf.md). No endpoint exceeded 2 s p95.
 
 ## Clean-clone demo stack
 

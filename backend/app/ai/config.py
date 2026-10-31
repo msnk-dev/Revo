@@ -13,7 +13,7 @@ class AISettings(BaseSettings):
     groq_router_model: str = ""
     hf_token: str | None = None
     hf_model: str = ""
-    ollama_base_url: str = "http://host.docker.internal:11434/v1"
+    ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = ""
     ollama_api_key: str = "ollama"
     llm_timeout_s: float = Field(default=20, gt=0, le=120)

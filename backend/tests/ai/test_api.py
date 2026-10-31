@@ -18,14 +18,16 @@ def _login(client, email: str):
 def test_chat_uses_deterministic_local_report_when_no_provider(client, create_user, db_session, monkeypatch):
     user = create_user("admin@example.com", "admin")
     csrf = _login(client, user.email)
-    monkeypatch.setattr(api, "_provider_answer", lambda _message, _context: (None, None, None, []))
+    monkeypatch.setattr(api.ai_settings, "groq_api_key", None)
+    monkeypatch.setattr(api.ai_settings, "hf_token", None)
+    monkeypatch.setattr(api.ai_settings, "ollama_model", "")
 
     response = client.post("/api/v1/ai/chat", headers=csrf, json={"message": "How much is outstanding?"})
 
     assert response.status_code == 200
     assert response.json()["offline"] is True
     assert "Current month report values" in response.json()["answer"]
-    run = db_session.scalar(select(AIRun).where(AIRun.agent == "assistant"))
+    run = db_session.scalar(select(AIRun).where(AIRun.agent == "revenue_insights"))
     assert run is not None and run.status == "fallback" and run.user_id == user.id
 
 

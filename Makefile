@@ -1,4 +1,4 @@
-.PHONY: up down logs seed seed-bulk test migrate
+.PHONY: up down logs seed seed-bulk perf test migrate
 
 up:
 	@python -c "from pathlib import Path; p=Path('.env'); p.exists() or p.write_bytes(Path('.env.example').read_bytes())"
@@ -15,6 +15,10 @@ seed:
 
 seed-bulk:
 	docker compose exec api python -m app.seed.bulk
+
+perf:
+	docker compose exec -e REVO_PERF_INTERNAL_AUTH=1 -e REVO_PERF_OUTPUT=/tmp/perf.md api python scripts/perf_smoke.py
+	docker compose cp api:/tmp/perf.md docs/perf.md
 
 test:
 	cd backend && uv --cache-dir .uv-cache run --frozen pytest

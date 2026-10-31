@@ -6,17 +6,21 @@ import re
 from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.deps import Actor
 from app.errors import ForbiddenError, NotFoundError, ValidationFailed
 from app.models import Customer, Invoice
+from app.schemas.discounts import DiscountCreateIn
 from app.services import billing, customers, discounts, email, invoices, reports, subscriptions
 from app.ai.schemas import (
     DiscountArgs,
+    DiscountSimulationArgs,
     DryRunArgs,
     EmptyArgs,
     InvoiceArgs,
+    CompareInvoiceArgs,
     MyInvoicesArgs,
     OverdueArgs,
     PaymentHistoryArgs,
@@ -49,6 +53,7 @@ class Tool:
     args: type[BaseModel]
     roles: tuple[str, ...]
     handler: Callable[[BaseModel, ToolContext], object]
+    agents: tuple[str, ...] = ()
 
     def openai_spec(self) -> dict:
         return {
@@ -102,6 +107,41 @@ def _dry_run(args: BaseModel, ctx: ToolContext):
 def _invoice(args: BaseModel, ctx: ToolContext):
     value = InvoiceArgs.model_validate(args)
     return billing.get_invoice_breakdown(ctx.db, ctx.actor, value.invoice_id)
+
+
+def _compare_previous_invoice(args: BaseModel, ctx: ToolContext):
+    value = CompareInvoiceArgs.model_validate(args)
+    query = select(Invoice).where(Invoice.id == value.invoice_id)
+    if ctx.actor.role == "customer":
+        if ctx.actor.customer_id is None:
+            raise NotFoundError("Customer account not found")
+        query = query.where(Invoice.customer_id == ctx.actor.customer_id)
+    current = ctx.db.scalar(query)
+    if current is None:
+        raise NotFoundError("Invoice not found")
+    previous = ctx.db.scalar(
+        select(Invoice).where(
+            Invoice.subscription_id == current.subscription_id,
+            Invoice.period_end < current.period_start,
+        ).order_by(Invoice.period_end.desc(), Invoice.id.desc()).limit(1)
+    )
+    if previous is None:
+        return {"current": billing.get_invoice_breakdown(ctx.db, ctx.actor, current.id), "previous": None}
+    return {
+        "current": billing.get_invoice_breakdown(ctx.db, ctx.actor, current.id),
+        "previous": billing.get_invoice_breakdown(ctx.db, ctx.actor, previous.id),
+    }
+
+
+def _simulate_discount(args: BaseModel, ctx: ToolContext):
+    value = DiscountSimulationArgs.model_validate(args)
+    if ctx.actor.role == "customer":
+        customer_id = ctx.actor.customer_id
+        if customer_id is None or ctx.db.scalar(select(Customer.id).where(
+            Customer.id == customer_id, Customer.user_id == ctx.actor.user_id
+        )) is None:
+            raise NotFoundError("Customer account not found")
+    return discounts.simulate_discount(ctx.db, value.product_id, value.quantity, value.discount_id, value.as_of)
 
 
 def _my_subscriptions(_args: BaseModel, ctx: ToolContext):
@@ -170,27 +210,40 @@ def _propose_reminder(args: BaseModel, ctx: ToolContext):
             "customer_name": customer.name, "amount_due": str(invoice.amount_due), "body": value.body.strip()}
 
 
+def _propose_discount_rule(args: BaseModel, ctx: ToolContext):
+    value = DiscountCreateIn.model_validate(args)
+    if ctx.actor.role != "admin":
+        raise ForbiddenError("Only an admin can propose a discount rule")
+    if ctx.proposal is not None:
+        raise ValidationFailed("Only one action may be proposed per assistant run")
+    ctx.proposal = {"action": "create_discount_rule", "discount": value.model_dump(mode="json")}
+    return {"proposal": "Discount rule prepared for admin confirmation", "discount": ctx.proposal["discount"]}
+
+
 TOOLS: tuple[Tool, ...] = (
-    Tool("get_summary", "Read report totals for an inclusive date range. Use report values; do not calculate money.", SummaryArgs, ("admin", "staff"), _summary),
-    Tool("get_revenue_by_month", "Read monthly invoiced and collected totals for an inclusive date range.", RevenueArgs, ("admin", "staff"), _revenue),
-    Tool("get_active_subscriptions_breakdown", "Read active and paused subscriptions grouped by plan.", EmptyArgs, ("admin", "staff"), _breakdown),
-    Tool("list_overdue_invoices", "List a bounded set of overdue invoices with balances and days overdue.", OverdueArgs, ("admin", "staff"), _overdue),
-    Tool("get_overdue_summary", "Read the current overdue invoice count and balance.", EmptyArgs, ("admin", "staff"), _overdue_summary),
-    Tool("dry_run_generate_invoices", "Preview the deterministic invoice run without changing data.", DryRunArgs, ("admin", "staff"), _dry_run),
-    Tool("get_invoice_breakdown", "Explain a single invoice using its stored line snapshots; customers can only read their own invoice.", InvoiceArgs, ("admin", "staff", "customer"), _invoice),
-    Tool("get_my_subscriptions", "List only the signed-in customer's subscriptions.", EmptyArgs, ("customer",), _my_subscriptions),
-    Tool("get_my_invoices", "List only the signed-in customer's invoices.", MyInvoicesArgs, ("customer",), _my_invoices),
-    Tool("get_customer_payment_history", "Read bounded payment history. Customer callers are scoped to their own account.", PaymentHistoryArgs, ("admin", "staff", "customer"), _payment_history),
-    Tool("list_eligible_discounts", "List existing eligible discounts for a customer and quantity; does not create or apply discounts.", DiscountArgs, ("admin", "staff", "customer"), _eligible_discounts),
-    Tool("propose_run_billing", "Propose a billing run for human confirmation; never runs billing directly.", ProposeBillingArgs, ("admin", "staff"), _propose_billing),
-    Tool("propose_send_reminder", "Draft a reminder for a verified overdue invoice. Sending requires separate human confirmation.", ProposeReminderArgs, ("admin", "staff"), _propose_reminder),
+    Tool("get_summary", "Read report totals for an inclusive date range. Use report values; do not calculate money.", SummaryArgs, ("admin", "staff"), _summary, ("revenue_insights",)),
+    Tool("get_revenue_by_month", "Read monthly invoiced and collected totals for an inclusive date range.", RevenueArgs, ("admin", "staff"), _revenue, ("revenue_insights",)),
+    Tool("get_active_subscriptions_breakdown", "Read active and paused subscriptions grouped by plan.", EmptyArgs, ("admin", "staff"), _breakdown, ("revenue_insights",)),
+    Tool("list_overdue_invoices", "List a bounded set of overdue invoices with balances and days overdue.", OverdueArgs, ("admin", "staff"), _overdue, ("collections",)),
+    Tool("get_overdue_summary", "Read the current overdue invoice count and balance.", EmptyArgs, ("admin", "staff"), _overdue_summary, ("collections",)),
+    Tool("dry_run_generate_invoices", "Preview the deterministic invoice run without changing data.", DryRunArgs, ("admin", "staff"), _dry_run, ("billing_ops",)),
+    Tool("get_invoice_breakdown", "Explain a single invoice using its stored line snapshots; customers can only read their own invoice.", InvoiceArgs, ("admin", "staff", "customer"), _invoice, ("invoice_explainer",)),
+    Tool("compare_with_previous_invoice", "Read this invoice and the previous invoice on the same subscription; customers are scoped to their own account.", CompareInvoiceArgs, ("admin", "staff", "customer"), _compare_previous_invoice, ("invoice_explainer",)),
+    Tool("get_my_subscriptions", "List only the signed-in customer's subscriptions.", EmptyArgs, ("customer",), _my_subscriptions, ("revenue_insights",)),
+    Tool("get_my_invoices", "List only the signed-in customer's invoices.", MyInvoicesArgs, ("customer",), _my_invoices, ("revenue_insights",)),
+    Tool("get_customer_payment_history", "Read bounded payment history. Customer callers are scoped to their own account.", PaymentHistoryArgs, ("admin", "staff", "customer"), _payment_history, ("revenue_insights",)),
+    Tool("list_eligible_discounts", "List existing eligible discounts for a customer and quantity; does not create or apply discounts.", DiscountArgs, ("admin", "staff", "customer"), _eligible_discounts, ("discount_advisor",)),
+    Tool("simulate_discount", "Simulate one eligible discount for a product and quantity without changing data.", DiscountSimulationArgs, ("admin", "staff", "customer"), _simulate_discount, ("discount_advisor",)),
+    Tool("propose_run_billing", "Propose a billing run for human confirmation; never runs billing directly.", ProposeBillingArgs, ("admin", "staff"), _propose_billing, ("billing_ops",)),
+    Tool("propose_send_reminder", "Draft a reminder for a verified overdue invoice. Sending requires separate human confirmation.", ProposeReminderArgs, ("admin", "staff"), _propose_reminder, ("collections",)),
+    Tool("propose_discount_rule", "Prepare a validated discount rule for admin confirmation; never create the rule directly.", DiscountCreateIn, ("admin",), _propose_discount_rule, ("discount_advisor",)),
 )
 
 TOOL_BY_NAME = {tool.name: tool for tool in TOOLS}
 
 
-def available_tools(actor: Actor) -> list[Tool]:
-    return [tool for tool in TOOLS if actor.role in tool.roles]
+def available_tools(actor: Actor, agent: str | None = None) -> list[Tool]:
+    return [tool for tool in TOOLS if actor.role in tool.roles and (agent is None or agent in tool.agents)]
 
 
 def execute_tool(name: str, arguments: object, context: ToolContext, agent: str | None = None):

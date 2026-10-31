@@ -4,7 +4,7 @@ import logging
 import re
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,19 +13,27 @@ from app.ai.briefing import _narrative_numbers_are_grounded, run_daily_brief
 from app.ai.agents import deterministic_route, run_agent
 from app.ai.config import settings as ai_settings
 from app.ai.models import AIRun, Brief
-from app.ai.providers import chat_completion
+from app.ai.providers import chat_completion, provider_failures
+from app.ai.routing import route_message
 from app.ai.schemas import (
+    AIRunListOut,
+    AIRunOut,
     ActionOut,
     ChatIn,
     ChatOut,
+    FailedRunExplanationOut,
     ProposeBillingArgs,
     ProposalOut,
+    RouteIn,
+    RouteOut,
 )
 from app.ai.tools import ToolContext, available_tools, execute_tool
 from app.deps import Actor, get_current_actor, get_db, require_roles
-from app.errors import NotFoundError, ValidationFailed
+from app.errors import ForbiddenError, NotFoundError, ValidationFailed
 from app.models import Customer, Invoice
 from app.services import billing, email
+from app.schemas.discounts import DiscountCreateIn
+from app.services import discounts as discount_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -60,7 +68,7 @@ def _daily_provider_tokens(db: Session) -> int:
     return int(used or 0)
 
 
-def _offline_answer(message: str, context: ToolContext) -> tuple[str, list[dict]]:
+def _offline_answer(message: str, context: ToolContext, route: RouteOut | None = None) -> tuple[str, list[dict]]:
     lower = message.lower()
     calls: list[dict] = []
 
@@ -69,6 +77,28 @@ def _offline_answer(message: str, context: ToolContext) -> tuple[str, list[dict]
         calls.append({"name": name, "arguments": args or {}, "result": result})
         return result
 
+    if route and route.intent == "compare_previous_invoice":
+        match = _INVOICE_ID.search(message)
+        if match:
+            try:
+                data = read("compare_with_previous_invoice", {"invoice_id": int(match.group(1))})
+                return f"Invoice comparison (read only): {_dump(data)}", calls
+            except Exception:
+                return "I couldn’t find that invoice or a previous invoice you’re allowed to view.", calls
+    if route and route.intent == "discount_simulation":
+        product_match = re.search(r"\bproduct\s+#?(\d+)\b", message, re.IGNORECASE)
+        quantity_match = re.search(r"\b(\d{1,6})\s+(?:seats?|users?|licenses?|units?)\b", lower)
+        if product_match and quantity_match:
+            data = read("simulate_discount", {"product_id": int(product_match.group(1)), "quantity": int(quantity_match.group(1))})
+            return f"Discount simulation (no changes saved): {_dump(data)}", calls
+        return "For an offline discount simulation, provide a product ID and quantity. No changes have been made.", calls
+    if route and route.intent == "propose_discount_rule":
+        return "An admin can propose a discount rule when a provider is available; no rule has been created.", calls
+    if route and route.intent == "billing_preview":
+        match = _DATE_START.search(message)
+        as_of = match.group(1) if match else date.today().isoformat()
+        data = read("dry_run_generate_invoices", {"as_of": as_of})
+        return f"Billing preview (no invoices created): {_dump(data)}", calls
     if "invoice" in lower and any(word in lower for word in ("explain", "why", "detail", "breakdown")):
         match = _INVOICE_ID.search(message)
         if match:
@@ -107,9 +137,10 @@ def _offline_answer(message: str, context: ToolContext) -> tuple[str, list[dict]
     )
 
 
-def _provider_answer(message: str, context: ToolContext) -> tuple[str | None, str | None, str | None, list[dict]]:
-    tools = available_tools(context.actor)
-    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": message}]
+def _provider_answer(message: str, context: ToolContext, agent: str) -> tuple[str | None, str | None, str | None, list[dict]]:
+    tools = available_tools(context.actor, agent)
+    system_prompt = _SYSTEM + f"\nYou are acting as the {agent.replace('_', ' ')} specialist. Use only its supplied tools."
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}]
     specs = [tool.openai_spec() for tool in tools]
     call_log: list[dict] = []
     repaired: set[str] = set()
@@ -157,6 +188,12 @@ def _provider_answer(message: str, context: ToolContext) -> tuple[str | None, st
     return None, provider_name, model_name, call_log
 
 
+@router.post("/route", response_model=RouteOut)
+def route_chat(payload: RouteIn, actor: Actor = ActorDep) -> RouteOut:
+    del actor
+    return route_message(payload.message)
+
+
 @router.post("/chat", response_model=ChatOut)
 def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> ChatOut:
     agent_name, _intent = deterministic_route(payload.message, actor.role)
@@ -202,15 +239,16 @@ def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> C
         )
 
     context = ToolContext(db=db, actor=actor)
+    route = route_message(payload.message)
     estimate_in = _estimated_tokens(payload.message)
     within_budget = ai_settings.llm_daily_token_budget > 0 and _daily_provider_tokens(db) + estimate_in <= ai_settings.llm_daily_token_budget
     if within_budget:
-        answer, provider_name, model_name, call_log = _provider_answer(payload.message, context)
+        answer, provider_name, model_name, call_log = _provider_answer(payload.message, context, route.agent)
     else:
         answer, provider_name, model_name, call_log = None, None, None, []
     offline = answer is None
     if answer is None:
-        answer, call_log = _offline_answer(payload.message, context)
+        answer, call_log = _offline_answer(payload.message, context, route)
     if context.proposal:
         if context.proposal["action"] == "run_billing":
             answer = f"I prepared an invoice-generation proposal for {context.proposal['as_of']}. It has not run; review and confirm it below."
@@ -218,7 +256,7 @@ def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> C
             answer = "I prepared a payment reminder draft. It has not been sent; review the subject and message below before confirming."
     tool_data = {"calls": call_log, "proposal": context.proposal}
     if not _narrative_numbers_are_grounded(answer, tool_data):
-        answer, fallback_calls = _offline_answer(payload.message, context)
+        answer, fallback_calls = _offline_answer(payload.message, context, route)
         call_log.extend(fallback_calls)
         tool_data = {"calls": call_log, "proposal": context.proposal}
         if not _narrative_numbers_are_grounded(answer, tool_data):
@@ -226,10 +264,19 @@ def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> C
             context.proposal = None
 
     run = AIRun(
-        agent="assistant",
+        agent=route.agent,
         user_id=actor.user_id,
         input=payload.message,
-        plan={"mode": "tool_assisted", "proposal": context.proposal},
+        plan={
+            "mode": "tool_assisted",
+            "route": route.model_dump(mode="json"),
+            "proposal": context.proposal,
+            "failure_reason": (
+                "daily provider token budget exceeded" if not within_budget else "; ".join(
+                    f"{provider}: {reason}" for provider, reason in provider_failures().items()
+                ) or "no provider is configured or available"
+            ) if offline else None,
+        },
         tool_calls=call_log,
         output=answer[:8000],
         model=model_name,
@@ -246,9 +293,11 @@ def chat(payload: ChatIn, db: Session = DbSession, actor: Actor = ActorDep) -> C
         proposal = context.proposal
         proposals.append(ProposalOut(
             id=str(run.id),
-            action=proposal["action"],
-            title="Run invoice generation" if proposal["action"] == "run_billing" else "Send payment reminder",
-            description=("Generate due invoices for " + proposal["as_of"] if proposal["action"] == "run_billing"
+            action=("create_discount_rule" if proposal["action"] == "create_discount_rule" else proposal["action"]),
+            title=("Create discount rule" if proposal["action"] == "create_discount_rule" else
+                   "Run invoice generation" if proposal["action"] == "run_billing" else "Send payment reminder"),
+            description=("Review and create the proposed discount rule" if proposal["action"] == "create_discount_rule" else
+                         "Generate due invoices for " + proposal["as_of"] if proposal["action"] == "run_billing"
                          else "Review and send the drafted reminder for invoice " + str(proposal["invoice_id"])),
             subject=proposal.get("subject"), body=proposal.get("body"),
         ))
@@ -261,6 +310,45 @@ def _pending_action(db: Session, action_id: int) -> AIRun:
     if run is None or run.status not in {"proposal_pending", "pending"} or not isinstance(run.plan, dict) or not run.plan.get("proposal"):
         raise NotFoundError("Pending assistant action not found")
     return run
+
+
+@router.get("/runs", response_model=AIRunListOut)
+def list_runs(
+    db: Session = DbSession,
+    actor: Actor = Depends(require_roles("admin")),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> AIRunListOut:
+    del actor
+    total = db.scalar(select(func.count()).select_from(AIRun)) or 0
+    rows = db.scalars(
+        select(AIRun).order_by(AIRun.created_at.desc(), AIRun.id.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    )
+    return AIRunListOut(
+        items=[AIRunOut(id=row.id, agent=row.agent, user_id=row.user_id, status=row.status,
+                        provider=row.provider, model=row.model, created_at=row.created_at.isoformat()) for row in rows],
+        total=total, page=page, page_size=page_size,
+    )
+
+
+@router.get("/runs/{run_id}/explanation", response_model=FailedRunExplanationOut)
+def explain_failed_run(
+    run_id: int = Path(gt=0), db: Session = DbSession,
+    actor: Actor = Depends(require_roles("admin")),
+) -> FailedRunExplanationOut:
+    del actor
+    run = db.get(AIRun, run_id)
+    if run is None:
+        raise NotFoundError("AI run not found")
+    if run.status not in {"failed", "fallback"}:
+        raise ValidationFailed("The run has no failure to explain")
+    plan = run.plan if isinstance(run.plan, dict) else {}
+    explanation = plan.get("failure_reason") or (
+        "The assistant used deterministic fallback because no provider returned a usable answer."
+        if run.status == "fallback" else "The AI run ended before a reliable answer was produced."
+    )
+    return FailedRunExplanationOut(id=run.id, status=run.status, explanation=explanation, provider=run.provider)
 
 
 @router.post("/actions/{action_id}/confirm", response_model=ActionOut)
@@ -297,6 +385,12 @@ def confirm_action(
             raise NotFoundError("Invoice customer not found")
         email.send_plain(customer.email, str(proposal.get("subject", "Payment reminder")), str(proposal.get("body", "")))
         result_data = {"invoice_id": invoice.id, "sent": True}
+    elif action == "create_discount_rule":
+        if actor.role != "admin":
+            raise ForbiddenError("Only an admin can confirm a discount rule")
+        payload = DiscountCreateIn.model_validate(proposal.get("discount", {}))
+        created = discount_service.create_discount(db, payload)
+        result_data = {"discount_id": created["id"], "name": created["name"], "created": True}
     else:
         raise ValidationFailed("Unknown assistant action")
     run.status = "confirmed"

@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     smtp_from: str = "noreply@revo.local"
     cors_origins: str = "http://localhost:5173"
     enable_scheduler: bool = False
+
+    @field_validator("cors_origins")
+    @classmethod
+    def reject_wildcard_cors(cls, value: str) -> str:
+        origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        if not origins or "*" in origins:
+            raise ValueError("CORS_ORIGINS must contain explicit origins and cannot use a wildcard")
+        return ",".join(origins)
 
     @model_validator(mode="after")
     def enforce_production_secret(self):

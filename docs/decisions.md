@@ -63,7 +63,7 @@
 
 ## M14 — Hardening
 
-- Demo account passwords are generated for a new local database or supplied through `REVO_DEMO_ADMIN_PASSWORD` and `REVO_DEMO_CUSTOMER_PASSWORD`; the seed never prints a newly generated password when the admin already exists.
+- Demo account passwords are generated for a new local database or supplied through `REVO_DEMO_ADMIN_PASSWORD` and `REVO_DEMO_CUSTOMER_PASSWORD`; every configured value must meet the password rule. Seeding preserves existing credentials unless `--reset-credentials` is explicitly passed, which rotates both demo accounts, invalidates sessions, and prints the new one-time passwords. The legacy `admin123` / `user123` classroom credentials are available only with `APP_ENV=demo` and the explicit `--use-legacy-demo-passwords` flag; signup and reset keep the full password rule in every environment.
 - Production settings reject both the built-in development signing key and the `.env.example` placeholder. Browser cookie mutations use double-submit CSRF validation; bearer-token clients remain compatible.
 - The login failure limiter is process-local, so a multi-worker production deployment should move that counter to shared storage before scaling beyond the single API worker used in Compose.
 

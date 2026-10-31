@@ -1,10 +1,11 @@
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import ConflictError, NotFoundError, ValidationFailed
-from app.models import Discount, DiscountProduct, Product
+from app.models import Discount, DiscountProduct, Product, Tax
 from app.schemas.contract import DiscountOut
 from app.schemas.discounts import DiscountCreateIn
 
@@ -118,3 +119,49 @@ def list_eligible(db: Session, customer_id: int, quantity: int, product_id: int 
         estimated = product.sales_price * quantity
         query = query.where(Discount.min_purchase <= estimated)
     return [DiscountOut(id=row.id, name=row.name, type=row.type, value=row.value, scope=row.scope) for row in db.scalars(query.order_by(Discount.id))]
+
+
+def simulate_discount(db: Session, product_id: int, quantity: int, discount_id: int | None, as_of: date) -> dict:
+    """Preview billing's best eligible single-line discount without changing data."""
+    product = db.get(Product, product_id)
+    if product is None or not product.is_active:
+        raise NotFoundError("Product not found")
+    money = lambda value: Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    gross = money(product.sales_price * quantity)
+    query = select(Discount).where(
+        Discount.is_active.is_(True),
+        (Discount.start_date.is_(None)) | (Discount.start_date <= as_of),
+        (Discount.end_date.is_(None)) | (Discount.end_date >= as_of),
+        (Discount.max_uses.is_(None)) | (Discount.uses_count < Discount.max_uses),
+        Discount.min_quantity <= quantity,
+        Discount.min_purchase <= gross,
+    )
+    if discount_id is not None:
+        query = query.where(Discount.id == discount_id)
+    candidates = []
+    for discount in db.scalars(query):
+        if discount.scope == "product" and db.scalar(select(DiscountProduct.id).where(
+            DiscountProduct.discount_id == discount.id, DiscountProduct.product_id == product_id
+        )) is None:
+            continue
+        saving = gross * discount.value / Decimal("100") if discount.type == "percent" else discount.value
+        saving = min(money(saving), gross)
+        if saving > 0:
+            candidates.append((saving, discount))
+    saving, chosen = max(candidates, key=lambda item: (item[0], -item[1].id), default=(Decimal("0.00"), None))
+    if discount_id is not None and chosen is None:
+        raise NotFoundError("Eligible discount not found")
+    tax = db.get(Tax, product.default_tax_id) if product.default_tax_id is not None else None
+    tax_rate = tax.rate_pct if tax is not None else Decimal("0")
+    tax_amount = money((gross - saving) * tax_rate / Decimal("100"))
+    return {
+        "product_id": product.id,
+        "quantity": quantity,
+        "unit_price": str(product.sales_price),
+        "subtotal": str(gross),
+        "discount_id": chosen.id if chosen else None,
+        "discount_name": chosen.name if chosen else None,
+        "discount_amount": str(saving),
+        "tax_amount": str(tax_amount),
+        "total": str(money(gross - saving + tax_amount)),
+    }

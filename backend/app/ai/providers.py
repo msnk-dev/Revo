@@ -6,6 +6,7 @@ import time
 from time import monotonic, perf_counter
 from typing import Any
 
+import httpx
 from openai import OpenAI
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,6 +31,8 @@ class ProviderResponse:
     latency_ms: int
     tokens_in: int | None
     tokens_out: int | None
+_circuit_until = _breaker_until
+_provider_failures: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -87,18 +90,29 @@ def _transient(exc: Exception) -> bool:
 
 def _request(provider: str, messages: list[dict], tools: list[dict] | None, temperature: float, *, router_model: bool = False, structured: bool = False):
     credentials = _credentials(provider, router_model=router_model)
-    if credentials is None or _breaker_until.get(provider, 0.0) > monotonic():
+    if credentials is None:
+        _provider_failures[provider] = "not configured"
+        return None
+    if _breaker_until.get(provider, 0.0) > monotonic():
+        _provider_failures[provider] = "circuit breaker open"
         return None
     base_url, api_key, model, timeout = credentials
     started = perf_counter()
-    for attempt in range(settings.llm_max_retries + 1):
+    retries = 0 if provider == "ollama" else settings.llm_max_retries
+    for attempt in range(retries + 1):
         try:
-            client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0)
+            client = OpenAI(
+                base_url=base_url,
+                api_key=api_key,
+                timeout=httpx.Timeout(timeout, connect=min(timeout, 3.0)),
+                max_retries=0,
+            )
             options = {"model": model, "messages": messages, "temperature": temperature}
             if tools:
                 options.update({"tools": tools, "tool_choice": "auto"})
             response = client.chat.completions.create(**options)
             _breaker_until.pop(provider, None)
+            _provider_failures.pop(provider, None)
             message = response.choices[0].message
             latency_ms = int((perf_counter() - started) * 1000)
             if structured:
@@ -114,8 +128,9 @@ def _request(provider: str, messages: list[dict], tools: list[dict] | None, temp
             return provider, model, message, latency_ms
         except Exception as exc:
             logger.warning("AI provider %s failed on attempt %s (%s)", provider, attempt + 1, type(exc).__name__)
-            if attempt >= settings.llm_max_retries or not _transient(exc):
+            if attempt >= retries or not _transient(exc):
                 _breaker_until[provider] = monotonic() + 60.0
+                _provider_failures[provider] = f"request failed ({type(exc).__name__})"
                 return None
             delay = _retry_after(exc)
             time.sleep(delay if delay is not None else min(0.5 * (2**attempt), 2.0))
@@ -144,12 +159,19 @@ def _within_daily_budget(db: Session | None, tokens_used_this_run: int) -> bool:
 def chat_completion(messages: list[dict], tools: list[dict] | None = None, *, router_model: bool = False, db=None, tokens_used_this_run: int = 0):
     if not _within_daily_budget(db, tokens_used_this_run):
         return None
-    structured = router_model or db is not None or tokens_used_this_run > 0 or not tools
+    # Preserve Person B's structured default for direct calls while retaining
+    # the tuple contract used by the original tool loop when it passes [] explicitly.
+    structured = router_model or db is not None or tokens_used_this_run > 0 or tools is None
     for provider in provider_order():
         result = _request(provider, messages, tools or None, temperature=0.1, router_model=router_model, structured=structured)
         if result is not None:
             return result
     return None
+
+
+def provider_failures() -> dict[str, str]:
+    """Safe diagnostics for local failed-run explanations (no values or prompts)."""
+    return dict(_provider_failures)
 
 
 def generate_brief(payload: dict) -> BriefCompletion | None:

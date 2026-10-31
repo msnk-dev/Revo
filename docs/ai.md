@@ -9,8 +9,10 @@ The assistant does not calculate financial values, create invoices, change subsc
 ## Architecture
 
 - `backend/app/ai/tools.py` is the allow-listed registry. Every tool validates its arguments with a Pydantic model; the model cannot request SQL or arbitrary Python execution.
-- `backend/app/ai/api.py` runs up to four provider/tool steps, bounds tool results, logs runs to `ai_runs`, and exposes chat, action confirmation/rejection, and daily brief endpoints.
-- `backend/app/ai/providers.py` uses the OpenAI-compatible SDK with Groq → Hugging Face → Ollama according to `LLM_PROVIDER_ORDER`. It retries transient errors, honors numeric `Retry-After` values, opens a 60-second provider circuit after failure, then uses deterministic local answers when all providers are unavailable.
+- `backend/app/ai/routing.py` deterministically classifies a prompt to a Pydantic-validated `{agent, intent}` object. Revenue Insights, Invoice Explainer, Collections, Billing Ops, and Discount Advisor receive only their specialist tools.
+- `backend/app/ai/api.py` runs at most four provider/tool steps, bounds tool results, logs specialist runs to `ai_runs`, and exposes chat, routing, run history, failed-run explanation, action confirmation/rejection, and daily brief endpoints.
+- `backend/app/ai/providers.py` uses the OpenAI-compatible SDK with Groq → Hugging Face → Ollama according to `LLM_PROVIDER_ORDER`. Connect timeout is capped at 3 seconds; failed providers open a 60-second circuit. Ollama is attempted once per circuit window. All-provider failures fall back to deterministic local answers.
+- `backend/scripts/check_ollama_tools.py` sends a data-free required function-call probe to the configured Ollama model. Run it before relying on a newly pulled model.
 - `backend/app/ai/briefing.py` builds a payload from report services, stores a daily brief in `briefs`, and replaces provider text with a deterministic template if its numbers are not present in the computed payload.
 - Provider output is narration only. Customer names, product descriptions, invoice notes, and tool results are treated as data, never as instructions.
 
@@ -21,12 +23,15 @@ All paths below are under `/api/v1/ai` and require a signed-in user.
 | Method | Path | Access | Purpose |
 |---|---|---|---|
 | `POST` | `/chat` | Admin, staff, customer | Ask a question; returns an answer and any pending proposals. |
-| `POST` | `/actions/{id}/confirm` | Admin, staff | Run the approved billing operation or send the reviewed reminder. |
+| `POST` | `/route` | Signed-in user | Return validated specialist and intent JSON. |
+| `GET` | `/runs` | Admin | Paginated assistant-run history. |
+| `GET` | `/runs/{id}/explanation` | Admin | Explain fallback or failed runs without exposing provider secrets. |
+| `POST` | `/actions/{id}/confirm` | Admin, staff; discount-rule proposals require admin | Run the approved billing operation, send the reviewed reminder, or create the reviewed discount rule. |
 | `POST` | `/actions/{id}/reject` | Admin, staff | Reject a pending proposal without performing it. |
 | `POST` | `/brief/generate` | Admin, staff | Generate or refresh today's deterministic/AI-assisted brief. |
 | `GET` | `/brief/latest` | Admin, staff | Read the latest stored daily brief. |
 
-The only write proposals currently implemented are due invoice generation and a reminder for a verified overdue invoice. Proposals are stored in `ai_runs.plan`; only pending records can be confirmed, and a proposal can be confirmed once.
+Write tools only create proposals. Billing runs, reminders, and discount-rule creation require a separate confirmation; discount rules can only be confirmed by an admin. Discount simulation and previous-invoice comparison are read-only. Customer invoice comparison and discount simulation derive scope from the signed-in actor inside the tool, not a model-supplied customer ID.
 
 ## Configuration
 
@@ -39,14 +44,14 @@ Set values in the root `.env` copied from `.env.example`. Keep secrets private.
 | `GROQ_MODEL` | Empty disables Groq until an explicit model is configured. |
 | `HF_TOKEN` | Empty disables Hugging Face. |
 | `HF_MODEL` | Empty disables Hugging Face until an explicit model is configured. |
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` for the API in Docker to reach a host Ollama server. For an API running directly on the host, set `http://localhost:11434/v1`. |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` for Docker to reach host Ollama. For an API running directly on the host, use `http://localhost:11434/v1`. |
 | `OLLAMA_MODEL` | Empty disables Ollama until a model supporting tool calling is configured. |
 | `OLLAMA_API_KEY` | Local compatibility value; defaults to `ollama`. |
 | `LLM_TIMEOUT_S` | `20` seconds for remote providers; Ollama is capped at `3` seconds. |
 | `LLM_MAX_RETRIES` | `2` retries for transient provider failures. |
 | `LLM_DAILY_TOKEN_BUDGET` | `100000`; an approximate character-based token budget is enforced per UTC day and logged for provider-backed chat and brief runs. |
 
-No provider calls are made when its key and model are unset. In that default setup, chat uses the local report/customer services for supported questions, and the daily brief uses its deterministic fallback. Ollama is optional and must have a pulled model that supports OpenAI-compatible tool calls. The budget uses a character-based token estimate because provider token usage is not returned consistently across all configured models.
+No provider calls are made when its key or model is unset. In that default setup, chat uses local report/customer services for supported questions, and the daily brief uses its deterministic fallback. After pulling/configuring Ollama, run `docker compose exec api python scripts/check_ollama_tools.py`; only rely on the model if the required tool call succeeds. The budget uses a character-based token estimate because provider token usage is not returned consistently across all configured models.
 
 ## Demo
 
@@ -59,4 +64,4 @@ The frontend is API-backed by default (`VITE_USE_MOCKS=false`). For the limited 
 
 ## Verification
 
-Run `cd backend && uv --cache-dir .uv-cache run --frozen pytest tests/ai -q`. The AI tests cover router registration, the database models, deterministic brief upsert/fallback behavior, and number grounding. Provider integrations require credentials and network access and are not exercised by the local default test suite.
+Run `cd backend && uv --cache-dir .uv-cache run --frozen pytest tests/ai -q`. The AI tests cover 20 labeled routes, malformed tool arguments, mocked Groq 429 failover, cross-customer prompt isolation, approval-only writes, offline fallback, run-history RBAC, and number grounding. Provider integrations require credentials and network access and are otherwise mocked in tests.

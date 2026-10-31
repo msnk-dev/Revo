@@ -13,9 +13,45 @@ class ChatIn(StrictModel):
     thread_id: str | None = Field(default=None, max_length=80)
 
 
+class RouteOut(StrictModel):
+    agent: Literal["revenue_insights", "invoice_explainer", "collections", "billing_ops", "discount_advisor"]
+    intent: Literal[
+        "revenue_summary", "invoice_explanation", "compare_previous_invoice", "collections",
+        "billing_preview", "discount_simulation", "propose_discount_rule", "account_help", "general_question",
+    ]
+
+
+class AIRunOut(StrictModel):
+    id: int
+    agent: str
+    user_id: int | None
+    status: str
+    provider: str | None
+    model: str | None
+    created_at: str
+
+
+class AIRunListOut(StrictModel):
+    items: list[AIRunOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class FailedRunExplanationOut(StrictModel):
+    id: int
+    status: str
+    explanation: str
+    provider: str | None
+
+
+class RouteIn(StrictModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
 class ProposalOut(StrictModel):
     id: str
-    action: Literal["run_billing", "send_reminder"]
+    action: Literal["run_billing", "send_reminder", "create_discount_rule"]
     title: str
     description: str
     subject: str | None = None
@@ -59,6 +95,17 @@ class DryRunArgs(StrictModel):
 
 
 class InvoiceArgs(StrictModel):
+    invoice_id: int = Field(gt=0)
+
+
+class DiscountSimulationArgs(StrictModel):
+    product_id: int = Field(gt=0)
+    quantity: int = Field(ge=1, le=100000)
+    discount_id: int | None = Field(default=None, gt=0)
+    as_of: date = Field(default_factory=date.today)
+
+
+class CompareInvoiceArgs(StrictModel):
     invoice_id: int = Field(gt=0)
 
 

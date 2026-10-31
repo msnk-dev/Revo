@@ -173,18 +173,17 @@ def export_report_csv(db: Session, date_from: date, date_to: date) -> str:
         writer.writerow(["overdue", item.due_date.isoformat(), item.invoice_number, item.customer_name,
                          "days_overdue", item.days_overdue, item.amount_due])
 
-    page_size = 100
-    items, total, _amount = get_payment_report(db, date_from, date_to, 1, page_size)
-    page = 1
-    while True:
-        if page > 1:
-            items, _total, _amount = get_payment_report(db, date_from, date_to, page, page_size)
-        for item in items:
-            writer.writerow(["payment", item.paid_on.isoformat(), item.invoice_number, item.customer_name,
-                             item.method, "", item.amount])
-        if page * page_size >= total:
-            break
-        page += 1
+    payment_rows = db.execute(
+        select(Payment.paid_on, Invoice.number, Customer.name, PaymentMethod.name, Payment.amount)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .join(Customer, Customer.id == Invoice.customer_id)
+        .join(PaymentMethod, PaymentMethod.id == Payment.method_id)
+        .where(Payment.paid_on >= date_from, Payment.paid_on <= date_to)
+        .order_by(Payment.paid_on.desc(), Payment.id.desc())
+        .execution_options(yield_per=1000)
+    )
+    for paid_on, invoice_number, customer_name, method, amount in payment_rows:
+        writer.writerow(["payment", paid_on.isoformat(), invoice_number, customer_name, method, "", amount])
 
     # Sanitize every cell, including customer/plan-supplied text, before it reaches a spreadsheet.
     output.seek(0)

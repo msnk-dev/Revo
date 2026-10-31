@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+import argparse
 import os
 import secrets
 
@@ -26,22 +27,70 @@ from app.models import (
 )
 
 ADMIN_EMAIL = "admin@example.com"
-ADMIN_PASSWORD = os.environ.get("REVO_DEMO_ADMIN_PASSWORD") or f"{secrets.token_urlsafe(18)}A!"
-CUSTOMER_PASSWORD = os.environ.get("REVO_DEMO_CUSTOMER_PASSWORD") or f"{secrets.token_urlsafe(18)}B!"
 
 
-def seed_demo_data() -> None:
+def _compliant_password(value: str) -> bool:
+    return (
+        len(value) >= 9
+        and any(char.isupper() for char in value)
+        and any(char.islower() for char in value)
+        and any(not char.isalnum() for char in value)
+    )
+
+
+def _new_demo_password() -> str:
+    # The fixed suffix guarantees upper, lower, special, and length rules.
+    return f"{secrets.token_urlsafe(24)}aA!"
+
+
+ADMIN_PASSWORD = os.environ.get("REVO_DEMO_ADMIN_PASSWORD") or _new_demo_password()
+CUSTOMER_PASSWORD = os.environ.get("REVO_DEMO_CUSTOMER_PASSWORD") or _new_demo_password()
+LEGACY_DEMO_ADMIN_PASSWORD = "admin123"
+LEGACY_DEMO_CUSTOMER_PASSWORD = "user123"
+
+
+def seed_demo_data(*, reset_credentials: bool = False, use_legacy_demo_passwords: bool = False) -> None:
+    admin_password, customer_password = ADMIN_PASSWORD, CUSTOMER_PASSWORD
+    if use_legacy_demo_passwords:
+        from app.config import settings
+
+        if settings.app_env.lower() != "demo":
+            raise RuntimeError("Weak demo passwords can only be loaded when APP_ENV=demo")
+        admin_password, customer_password = LEGACY_DEMO_ADMIN_PASSWORD, LEGACY_DEMO_CUSTOMER_PASSWORD
+    else:
+        for env_name, password in (
+            ("REVO_DEMO_ADMIN_PASSWORD", admin_password),
+            ("REVO_DEMO_CUSTOMER_PASSWORD", customer_password),
+        ):
+            if not _compliant_password(password):
+                raise RuntimeError(f"{env_name} must be at least 9 characters and include uppercase, lowercase, and special characters")
+
     hasher = PasswordHasher()
+    if reset_credentials:
+        with SessionLocal.begin() as db:
+            admin = db.scalar(select(User).where(func.lower(User.email) == ADMIN_EMAIL))
+            customer = db.scalar(select(User).where(func.lower(User.email) == "customer@example.com"))
+            if admin is None or customer is None:
+                raise RuntimeError("Cannot reset demo credentials: seed the demo accounts first")
+            admin.password_hash = hasher.hash(admin_password)
+            admin.token_version += 1
+            customer.password_hash = hasher.hash(customer_password)
+            customer.token_version += 1
+        print("Existing demo credentials were reset and all previous sessions invalidated.")
+        print(f"Admin login: {ADMIN_EMAIL} / {admin_password}")
+        print(f"Customer login: customer@example.com / {customer_password}")
+        return
+
     with SessionLocal.begin() as db:
         existing = db.scalar(select(User).where(func.lower(User.email) == ADMIN_EMAIL))
         if existing:
             print(f"Demo data already exists. Admin login: {ADMIN_EMAIL}; the original password is unchanged.")
             return
 
-        admin = User(email=ADMIN_EMAIL, password_hash=hasher.hash(ADMIN_PASSWORD), role="admin", is_active=True)
+        admin = User(email=ADMIN_EMAIL, password_hash=hasher.hash(admin_password), role="admin", is_active=True)
         customer_user = User(
             email="customer@example.com",
-            password_hash=hasher.hash(CUSTOMER_PASSWORD),
+            password_hash=hasher.hash(customer_password),
             role="customer",
             is_active=True,
         )
@@ -134,10 +183,14 @@ def seed_demo_data() -> None:
             ]
         )
 
-    print(f"Demo data loaded. Admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
-    print(f"Customer login: customer@example.com / {CUSTOMER_PASSWORD}")
+    print(f"Demo data loaded. Admin login: {ADMIN_EMAIL} / {admin_password}")
+    print(f"Customer login: customer@example.com / {customer_password}")
 
 
 if __name__ == "__main__":
-    seed_demo_data()
+    parser = argparse.ArgumentParser(description="Load Revo's local demo fixtures")
+    parser.add_argument("--reset-credentials", action="store_true", help="rotate existing demo passwords and revoke old sessions")
+    parser.add_argument("--use-legacy-demo-passwords", action="store_true", help="use admin123/user123 only with APP_ENV=demo")
+    arguments = parser.parse_args()
+    seed_demo_data(reset_credentials=arguments.reset_credentials, use_legacy_demo_passwords=arguments.use_legacy_demo_passwords)
 

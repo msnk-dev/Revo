@@ -1,5 +1,7 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import csv
+from io import StringIO
 
 from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session
@@ -136,3 +138,89 @@ def get_payment_report(db: Session, date_from: date, date_to: date, page: int, p
                                  customer_name=customer, amount=p.amount, paid_on=p.paid_on, method=method)
              for p, number, customer, method in rows]
     return items, count, _round(Decimal(amount))
+
+
+def _spreadsheet_safe(value: object) -> str:
+    text = "" if value is None else str(value)
+    first = text.lstrip(" \t\r\n")[:1]
+    return f"'{text}" if first in {"=", "+", "-", "@"} else text
+
+
+def export_report_csv(db: Session, date_from: date, date_to: date) -> str:
+    """Export the same date-filtered summary, revenue, and payment data as Reports."""
+    _valid_range(date_from, date_to)
+    output = StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(["section", "date", "invoice_number", "customer_name", "metric", "count", "amount"])
+
+    summary = get_summary(db, date_from, date_to)
+    for metric in ("active_subscriptions", "paused_subscriptions", "overdue_count"):
+        writer.writerow(["summary", "", "", "", metric, getattr(summary, metric), ""])
+    for metric in ("mrr", "collected", "invoiced", "outstanding"):
+        writer.writerow(["summary", "", "", "", metric, "", getattr(summary, metric)])
+
+    for point in get_revenue_by_month(db, date_from, date_to):
+        writer.writerow(["revenue", point.month.isoformat(), "", "", "collected", "", point.revenue_collected])
+        writer.writerow(["revenue", point.month.isoformat(), "", "", "invoiced", "", point.invoiced])
+
+    breakdown = get_active_subscriptions_breakdown(db)
+    writer.writerow(["subscriptions", "", "", "", "active", breakdown.active, ""])
+    writer.writerow(["subscriptions", "", "", "", "paused", breakdown.paused, ""])
+    for plan_name, count in sorted(breakdown.by_plan.items()):
+        writer.writerow(["subscriptions", "", "", plan_name, "active_by_plan", count, ""])
+
+    for item in list_overdue(db, limit=1000):
+        writer.writerow(["overdue", item.due_date.isoformat(), item.invoice_number, item.customer_name,
+                         "days_overdue", item.days_overdue, item.amount_due])
+
+    page_size = 100
+    items, total, _amount = get_payment_report(db, date_from, date_to, 1, page_size)
+    page = 1
+    while True:
+        if page > 1:
+            items, _total, _amount = get_payment_report(db, date_from, date_to, page, page_size)
+        for item in items:
+            writer.writerow(["payment", item.paid_on.isoformat(), item.invoice_number, item.customer_name,
+                             item.method, "", item.amount])
+        if page * page_size >= total:
+            break
+        page += 1
+
+    # Sanitize every cell, including customer/plan-supplied text, before it reaches a spreadsheet.
+    output.seek(0)
+    safe_output = StringIO(newline="")
+    safe_writer = csv.writer(safe_output, lineterminator="\r\n")
+    for row in csv.reader(output):
+        safe_writer.writerow([_spreadsheet_safe(cell) for cell in row])
+    return safe_output.getvalue()
+
+
+def list_renewal_reminders(db: Session, today: date | None = None) -> dict[str, object]:
+    current = today or date.today()
+    through = current + timedelta(days=7)
+    filters = (
+        Subscription.status == "active",
+        Subscription.expiry_date >= current,
+        Subscription.expiry_date <= through,
+    )
+    count = db.scalar(select(func.count()).select_from(Subscription).where(*filters)) or 0
+    rows = db.execute(
+        select(Subscription, Customer.name, Plan.name)
+        .join(Customer, Customer.id == Subscription.customer_id)
+        .join(Plan, Plan.id == Subscription.plan_id)
+        .where(*filters)
+        .order_by(Subscription.expiry_date, Subscription.id)
+        .limit(100)
+    )
+    items = [
+        {
+            "subscription_id": subscription.id,
+            "number": subscription.number,
+            "customer_name": customer_name,
+            "plan_name": plan_name,
+            "expiry_date": subscription.expiry_date,
+            "days_remaining": (subscription.expiry_date - current).days,
+        }
+        for subscription, customer_name, plan_name in rows
+    ]
+    return {"count": count, "items": items}

@@ -54,4 +54,14 @@ describe("API client CSRF headers", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("retains field-level validation details from the API", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Request validation failed", details: { name: "Field is required" } } }), { status: 422 }));
+
+    await expect(apiRequest("/products", { method: "POST", body: "{}" })).rejects.toMatchObject({
+      name: "ApiRequestError",
+      status: 422,
+      details: { name: "Field is required" },
+    });
+  });
 });

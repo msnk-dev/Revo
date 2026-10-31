@@ -21,4 +21,15 @@ describe("RoleGuard", () => {
     </Routes></AuthProvider></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByText("Portal destination")).toBeInTheDocument();
   });
+
+  it("keeps staff out of the admin-only catalog settings screen", async () => {
+    mockApiRequest.mockImplementation(async () => ({ id: 3, name: "Staff", role: "staff", customer_id: null }) as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/catalog"]}><AuthProvider><Routes>
+      <Route path="/catalog" element={<RoleGuard roles={["admin"]}><p>Catalog settings</p></RoleGuard>} />
+      <Route path="/" element={<p>Staff dashboard</p>} />
+    </Routes></AuthProvider></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText("Staff dashboard")).toBeInTheDocument();
+    expect(screen.queryByText("Catalog settings")).not.toBeInTheDocument();
+  });
 });

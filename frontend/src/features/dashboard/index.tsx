@@ -20,12 +20,14 @@ function localIsoDate(value: Date) { return `${value.getFullYear()}-${String(val
 
 function DashboardPage() {
   type OverdueRow = { invoice_id: number; invoice_number: string; customer_name: string; due_date: string; days_overdue: number; amount_due: string };
+  type RenewalReminder = { subscription_id: number; number: string; customer_name: string; plan_name: string; expiry_date: string; days_remaining: number };
   type Brief = { brief_date: string; narrative: string; used_fallback: boolean; provider: string | null; model: string | null };
   const queryClient = useQueryClient();
   const today = new Date(); const end = localIsoDate(today); const yearStart = `${today.getFullYear()}-01-01`; const sixMonthStart = localIsoDate(new Date(today.getFullYear(), today.getMonth() - 5, 1));
   const summary = useQuery({ queryKey: ["reports", "summary", yearStart, end], queryFn: () => apiRequest<Summary>(`/reports/summary?${new URLSearchParams({ from: yearStart, to: end })}`), refetchInterval: 15_000 });
   const revenue = useQuery({ queryKey: ["reports", "revenue", sixMonthStart, end], queryFn: () => apiRequest<RevenuePoint[]>(`/reports/revenue?${new URLSearchParams({ from: sixMonthStart, to: end })}`) });
   const overdue = useQuery({ queryKey: ["reports", "overdue"], queryFn: () => apiRequest<OverdueRow[]>("/reports/overdue?limit=5"), refetchInterval: 15_000 });
+  const renewals = useQuery({ queryKey: ["reports", "renewal-reminders"], queryFn: () => apiRequest<{ count: number; items: RenewalReminder[] }>("/reports/renewal-reminders"), refetchInterval: 15_000 });
   const brief = useQuery({ queryKey: ["ai", "brief", "latest"], queryFn: () => apiRequest<Brief | null>("/ai/brief/latest"), refetchInterval: 15_000 });
   const generateBrief = useMutation({ mutationFn: () => apiRequest<Brief>("/ai/brief/generate", { method: "POST" }), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["ai", "brief"] }); } });
 
@@ -39,16 +41,28 @@ function DashboardPage() {
     { key: "due", header: "Due date", render: (row) => new Date(`${row.due_date}T00:00:00`).toLocaleDateString("en-IN") },
     { key: "amount", header: "Amount due", render: (row) => <Money amount={row.amount_due} /> },
   ];
+  const renewalColumns: Column<RenewalReminder>[] = [
+    { key: "subscription", header: "Subscription", render: (row) => row.number },
+    { key: "customer", header: "Customer", render: (row) => row.customer_name },
+    { key: "plan", header: "Plan", render: (row) => row.plan_name },
+    { key: "expiry", header: "Expires", render: (row) => new Date(`${row.expiry_date}T00:00:00`).toLocaleDateString("en-IN") },
+    { key: "days", header: "In", render: (row) => `${row.days_remaining} day${row.days_remaining === 1 ? "" : "s"}` },
+  ];
 
   return <Screen eyebrow="Overview" title="Dashboard" description="A live view of subscriptions, collections, and receivables.">
     {import.meta.env.VITE_USE_MOCKS === "true" && <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">Demo data is enabled. Values shown here come from local mock fixtures.</p>}
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
       <MetricCard label="Active subscriptions" value={summary.data.active_subscriptions} note={`${summary.data.paused_subscriptions} paused`} />
       <MetricCard label="MRR" value={<Money amount={summary.data.mrr} />} note="Pre-tax monthly equivalent" />
       <MetricCard label="Collected" value={<Money amount={summary.data.collected} />} note="Payments received" accent="emerald" />
       <MetricCard label="Outstanding" value={<Money amount={summary.data.outstanding} />} note="Confirmed invoices" accent="amber" />
       <MetricCard label="Overdue invoices" value={summary.data.overdue_count} note="Past due with balance remaining" accent="rose" />
+      <MetricCard label="Renewals in 7 days" value={renewals.data?.count ?? (renewals.isLoading ? "…" : "—")} note="Active subscriptions expiring soon" accent="amber" />
     </div>
+    <section className="space-y-3">
+      <div><h2 className="font-semibold text-slate-900">Upcoming renewals <span className="text-slate-500">({renewals.data?.count ?? 0})</span></h2><p className="mt-1 text-sm text-slate-500">Active subscriptions expiring today through the next 7 days</p></div>
+      {renewals.isLoading ? <LoadingState label="Loading upcoming renewals…" /> : renewals.error ? <ErrorState message="Upcoming renewals are unavailable." onRetry={() => void renewals.refetch()} /> : <DataTable rows={renewals.data?.items ?? []} columns={renewalColumns} rowKey={(row) => row.subscription_id} page={1} pageSize={100} total={renewals.data?.count ?? 0} onPageChange={() => undefined} />}
+    </section>
     <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
       <section className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">Revenue trend</h2><p className="mt-1 text-xs text-slate-500">Collected payments by month</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">Last 6 months</span></div>

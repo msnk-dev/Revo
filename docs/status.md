@@ -6,15 +6,19 @@ Verification run on 2026-10-31 against the current project tree. Backend and fro
 
 | Check | Command / execution | Result |
 |---|---|---|
-| Backend tests | `docker compose run --rm --no-deps -v "C:/Rithun/Github/Revo/backend:/workspace" -w /workspace -e UV_PROJECT_ENVIRONMENT=/tmp/revo-test-venv --entrypoint sh api -c "uv sync --frozen && uv run --frozen pytest -q"` | **181 passed**, 0 failed, 1 deprecation warning, 24.95 s |
-| Frontend tests | `npm test -- --maxWorkers=1` during the `web` image build, using Node 22.23.4 | **15 passed** across 5 files; 0 failed |
+| Backend tests | `docker compose run --rm --no-deps -v "C:/Rithun/Github/Revo/backend:/workspace" -w /workspace -e UV_PROJECT_ENVIRONMENT=/tmp/revo-feature-test-venv --entrypoint sh api -c "uv sync --frozen && uv run --frozen pytest -q"` | **183 passed**, 0 failed, 1 deprecation warning, 25.03 s |
+| Frontend tests | `npm test -- --maxWorkers=1` during the `web` image build, using Node 22.23.4 | **18 passed** across 6 files; 0 failed |
 | Frontend production build | `npm run build` during the `web` image build | **Passed**: `tsc -b` and Vite 8.3.5 production bundle (104 modules) |
 | Compose configuration | `docker compose config --quiet` | **Passed** |
 | API and frontend images | `docker compose up --build -d` | **Passed**: both images built, including the frontend tests and production bundle |
 
 The deprecation warning is from Starlette's `TestClient` importing `httpx` through its deprecated compatibility path. It does not fail the test suite.
 
+The latest backend/frontend runs include CSV date filtering and the `=1+1` spreadsheet-injection regression, renewal window and role checks, API field-error parsing, the Odoo +560 variant and 10% minimum-quantity discount UI flow, and a staff-to-admin-only-catalog guard test.
+
 ## Clean-clone demo stack
+
+This clean-clone check verified the runnable Compose baseline before the current uncommitted catalog, reports, and dashboard feature changes. Repeat it after these changes are committed to verify a fresh clone of the feature-complete tree.
 
 The committed tree was cloned into an empty local folder with `git clone --no-local . .fresh-clone-check`. The existing demo already occupied the default host ports, so the isolated clone used alternate ports in its temporary `.env` file; the Compose services and images were otherwise unchanged.
 

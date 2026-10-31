@@ -1,5 +1,7 @@
-from datetime import date
+import csv
+from datetime import date, timedelta
 from decimal import Decimal
+from io import StringIO
 
 from app.deps import Actor
 from app.models import Customer, Invoice, InvoiceLine, Payment, PaymentMethod, Plan, Product, Subscription, SubscriptionLine, Tax
@@ -57,3 +59,55 @@ def test_customer_portal_helpers_are_scoped(db_session):
         pass
     else:
         raise AssertionError("another customer was able to retrieve invoice")
+
+
+def _login(client, email: str):
+    response = client.post("/api/v1/auth/login", json={"email": email, "password": "ValidPassword1!"})
+    assert response.status_code == 200
+
+
+def test_report_csv_uses_date_filters_and_neutralizes_formula_cells(client, create_user, db_session):
+    customer, invoice = seed_revenue(db_session)
+    customer.name = "=1+1"
+    db_session.add(Payment(invoice_id=invoice.id, method_id=db_session.query(PaymentMethod).one().id,
+                           amount=Decimal("1.00"), paid_on=date(2026, 11, 1)))
+    db_session.commit()
+
+    staff = create_user("csv-staff@example.com", "staff")
+    _login(client, staff.email)
+    response = client.get("/api/v1/reports/export.csv?from=2026-10-01&to=2026-10-31")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=\"revo-report-2026-10-01-2026-10-31.csv\"" == response.headers["content-disposition"]
+    rows = list(csv.reader(StringIO(response.text)))
+    payments = [row for row in rows if row[0] == "payment"]
+    assert len(payments) == 1
+    assert payments[0][1] == "2026-10-06"
+    assert payments[0][3] == "'=1+1"
+    assert all(not cell.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")) for row in rows for cell in row)
+
+    customer_user = create_user("csv-customer@example.com", "customer")
+    _login(client, customer_user.email)
+    denied = client.get("/api/v1/reports/export.csv?from=2026-10-01&to=2026-10-31")
+    assert denied.status_code == 403
+
+
+def test_renewal_reminder_report_returns_active_subscriptions_within_seven_days(client, create_user, db_session):
+    customer, _invoice = seed_revenue(db_session)
+    today = date.today()
+    soon = db_session.query(Subscription).one()
+    soon.expiry_date = today + timedelta(days=7)
+    outside = Subscription(number="SUB-OUTSIDE", customer_id=customer.id, plan_id=soon.plan_id, status="active",
+                           start_date=today, expiry_date=today + timedelta(days=8), is_paused=False)
+    db_session.add(outside)
+    db_session.commit()
+
+    staff = create_user("renewal-staff@example.com", "staff")
+    _login(client, staff.email)
+    response = client.get("/api/v1/reports/renewal-reminders")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert response.json()["items"][0]["number"] == soon.number
+    assert response.json()["items"][0]["days_remaining"] == 7

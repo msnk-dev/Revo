@@ -3,6 +3,21 @@ import { mockRequest } from "./mocks";
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 const csrfMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly details: Record<string, string> = {}) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+function errorDetails(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).map(([key, detail]) => [
+    key,
+    typeof detail === "string" ? detail : detail instanceof Error ? detail.message : String(JSON.stringify(detail) ?? ""),
+  ]));
+}
+
 function readCsrfCookie(): string | undefined {
   if (typeof document === "undefined") return undefined;
   const prefix = "csrf_token=";
@@ -33,19 +48,16 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let details: Record<string, string> = {};
     try {
-      const payload = await response.json() as { error?: { message?: string; details?: Record<string, unknown> } };
+      const payload = await response.json() as { error?: { message?: string; details?: unknown } };
       const error = payload.error;
-      const details = Object.entries(error?.details ?? {})
-        .map(([field, detail]) => `${field}: ${String(detail)}`)
-        .join("; ");
-      message = details
-        ? `${error?.message ?? message} (${details})`
-        : error?.message ?? message;
+      details = errorDetails(error?.details);
+      message = error?.message ?? message;
     } catch {
       // Keep the HTTP status message when the server response is not JSON.
     }
-    throw new Error(message);
+    throw new ApiRequestError(message, response.status, details);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

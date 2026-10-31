@@ -7,12 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AISettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    llm_provider_order: str = "groq"
+    llm_provider_order: str = "hf,groq"
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
     groq_router_model: str = "openai/gpt-oss-20b"
     hf_token: str | None = None
-    hf_model: str = "openai/gpt-oss-120b"
+    hf_model: str = "Qwen/Qwen3.8-27B:fastest"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = ""
     ollama_api_key: str = "ollama"

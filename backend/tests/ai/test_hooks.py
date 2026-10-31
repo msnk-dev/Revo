@@ -43,7 +43,9 @@ def test_daily_brief_uses_fallback_and_upserts_without_business_writes(db_sessio
             "invoiced": "80.00",
             "outstanding": "30.00",
             "overdue_count": 1,
-        }
+        },
+        collected=Decimal("50.00"),
+        invoiced=Decimal("80.00"),
     )
     monkeypatch.setattr(briefing, "_today_utc", lambda: report_day)
     monkeypatch.setattr(briefing.reports, "get_summary", lambda *args: summary)
@@ -60,7 +62,10 @@ def test_daily_brief_uses_fallback_and_upserts_without_business_writes(db_sessio
 
     briefs = db_session.scalars(select(models.Brief)).all()
     runs = db_session.scalars(select(models.AIRun)).all()
-    assert len(briefs) == 1
+    assert len(briefs) == 1, (
+        "Expected one saved CFO brief; AI run records were: "
+        f"{[(run.status, run.output) for run in runs]}"
+    )
     assert briefs[0].brief_date == report_day
     assert briefs[0].used_fallback is True
     assert briefs[0].payload["mrr_comparison"] is None

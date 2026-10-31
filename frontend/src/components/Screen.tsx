@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
 export function Screen({ eyebrow, title, description, actions, children }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode; children: ReactNode }) {
-  return <section className="mx-auto max-w-7xl space-y-6">
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>{eyebrow && <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">{eyebrow}</p>}<h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>{description && <p className="mt-1.5 text-sm text-slate-500">{description}</p>}</div>
+  return <section className="mx-auto max-w-7xl space-y-8">
+    <header className="flex flex-col gap-5 pb-2 sm:flex-row sm:items-end sm:justify-between">
+      <div className="max-w-2xl"><span className="sr-only">{eyebrow}</span><h1 className="revo-page-heading text-3xl font-semibold leading-tight text-slate-900 sm:text-4xl">{title}</h1>{description && <p className="mt-2 max-w-xl text-base leading-6 text-slate-600">{description}</p>}</div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </header>
     {children}
@@ -23,9 +23,9 @@ export function EmptyState({ title, description, action }: { title: string; desc
 }
 
 export function MetricCard({ label, value, note, accent = "indigo" }: { label: string; value: ReactNode; note?: string; accent?: "indigo" | "emerald" | "amber" | "rose" }) {
-  const tones = { indigo: "bg-indigo-50 text-indigo-700", emerald: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", rose: "bg-rose-50 text-rose-700" };
-  return <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-100"><div className="flex items-center justify-between"><p className="text-sm font-medium text-slate-500">{label}</p><span className={`h-2.5 w-2.5 rounded-full ${tones[accent].split(" ")[0]}`} /></div><div className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{value}</div>{note && <p className="mt-2 text-xs text-slate-500">{note}</p>}</article>;
+  const tones = { indigo: "text-indigo-700", emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700" };
+  return <article className="border-b border-slate-200 py-4"><p className="text-sm font-medium text-slate-600">{label}</p><div className={`mt-1 text-2xl font-semibold tabular-nums tracking-tight ${tones[accent]}`}>{value}</div>{note && <p className="mt-1 text-sm text-slate-500">{note}</p>}</article>;
 }
 
-export const primaryButton = "inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50";
-export const secondaryButton = "inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+export const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-sm bg-indigo-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50";
+export const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-sm border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50";

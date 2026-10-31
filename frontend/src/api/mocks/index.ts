@@ -28,6 +28,13 @@ let subscriptions: Subscription[] = [
     lines: [{ description: "Priority support", quantity: 1, unit_price: "18000.00" }],
     history: [{ from_status: "confirmed", to_status: "active", changed_at: "2026-02-15T00:05:00Z", changed_by: "System" }],
   },
+  {
+    id: 3, number: "SUB-000003", customer_id: 1, customer_name: "Brightloop Demo", plan_id: 2,
+    plan_name: "Annual Support", billing_period: "yearly", status: "active", start_date: "2025-11-06",
+    expiry_date: "2026-11-05", next_invoice_date: "2026-11-06", is_paused: false, pausable: true, closable: true, renewable: true, monthly_value: "1500.00",
+    lines: [{ description: "Priority support", quantity: 1, unit_price: "18000.00" }],
+    history: [{ from_status: "confirmed", to_status: "active", changed_at: "2025-11-06T00:05:00Z", changed_by: "System" }],
+  },
 ];
 let invoices: DemoInvoice[] = [
   {
@@ -167,6 +174,18 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     return reply(revenue);
   }
   if (route === "/reports/overdue") return reply(invoices.filter((invoice) => invoice.status === "confirmed" && invoice.amount_due !== "0.00" && invoice.due_date < seedDate).slice(0, Number(url.searchParams.get("limit") ?? 50)).map((invoice) => ({ invoice_id: invoice.id, invoice_number: invoice.number, customer_name: invoice.customer_name, due_date: invoice.due_date, days_overdue: Math.max(0, Math.floor((Date.parse(`${seedDate}T00:00:00Z`) - Date.parse(`${invoice.due_date}T00:00:00Z`)) / 86400000)), amount_due: invoice.amount_due })));
+  if (route === "/reports/renewal-reminders") {
+    const today = Date.parse(`${seedDate}T00:00:00Z`);
+    const through = today + 7 * 86400000;
+    const items = subscriptions
+      .filter((item) => item.status === "active" && item.expiry_date)
+      .map((item) => ({ item, expiry: Date.parse(`${item.expiry_date}T00:00:00Z`) }))
+      .filter(({ expiry }) => Number.isFinite(expiry) && expiry >= today && expiry <= through)
+      .sort((left, right) => left.expiry - right.expiry || left.item.id - right.item.id)
+      .slice(0, 100)
+      .map(({ item, expiry }) => ({ subscription_id: item.id, number: item.number, customer_name: item.customer_name, plan_name: item.plan_name, expiry_date: item.expiry_date, days_remaining: Math.floor((expiry - today) / 86400000) }));
+    return reply({ count: items.length, items });
+  }
   if (route === "/reports/overdue/summary") { const rows = invoices.filter((invoice) => invoice.status === "confirmed" && invoice.amount_due !== "0.00" && invoice.due_date < seedDate); return reply({ count: rows.length, amount_due: centsToDecimal(rows.reduce((sum, row) => sum + decimalToCents(row.amount_due), 0n)) }); }
   if (route === "/reports/subscriptions") return reply({ active: subscriptions.filter((item) => item.status === "active" && !item.is_paused).length, paused: subscriptions.filter((item) => item.is_paused).length, by_plan: { "Monthly Software": 1, "Annual Support": 1 } });
   if (route === "/reports/payments") {
